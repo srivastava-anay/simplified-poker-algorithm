@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poker-ai"
+version = "0.1.0"
+description = "A readable Texas Hold'em Monte Carlo decision engine"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "treys>=0.1.8,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+]
+
+[project.scripts]
+poker-ai = "poker_ai.cli:main"
+play-poker = "poker_ai.game:main"
+poker-table = "poker_ai.ui:main"
+
+[tool.setuptools.packages.find]
+include = ["poker_ai*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
