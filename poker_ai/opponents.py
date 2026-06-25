@@ -21,11 +21,14 @@ class OpponentAction:
     player_id: str
     action: ObservedAction
     amount: float = 0.0
+    faced_bet: bool = False
+    faced_raise: bool = False
+    pot_before_action: float = 0.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.action, ObservedAction):
             object.__setattr__(self, "action", ObservedAction(self.action))
-        if self.amount < 0:
+        if self.amount < 0 or self.pot_before_action < 0:
             raise ValueError("Action amount cannot be negative")
 
 
@@ -38,6 +41,10 @@ class OpponentProfile:
     bets: int = 0
     raises: int = 0
     aggressive_chips: float = 0.0
+    faced_bets: int = 0
+    folded_to_bets: int = 0
+    faced_raises: int = 0
+    folded_to_raises: int = 0
 
     @property
     def actions_seen(self) -> int:
@@ -55,6 +62,26 @@ class OpponentProfile:
         total = self.actions_seen
         return weak / total if total else 0.0
 
+    @property
+    def fold_to_bet(self) -> float:
+        # A small prior avoids wild adaptation after one observed hand.
+        return (self.folded_to_bets + 1.5) / (self.faced_bets + 4.0)
+
+    @property
+    def fold_to_raise(self) -> float:
+        return (self.folded_to_raises + 1.25) / (self.faced_raises + 4.0)
+
+    @property
+    def voluntary_action_rate(self) -> float:
+        voluntary = self.calls + self.bets + self.raises
+        meaningful = voluntary + self.folds
+        return (voluntary + 2.0) / (meaningful + 5.0)
+
+    @property
+    def average_aggressive_bet(self) -> float:
+        count = self.bets + self.raises
+        return self.aggressive_chips / count if count else 0.0
+
 
 class OpponentTracker:
     """Accumulate lightweight tendencies without requiring a database."""
@@ -68,6 +95,14 @@ class OpponentTracker:
         setattr(profile, field, getattr(profile, field) + 1)
         if event.action in {ObservedAction.BET, ObservedAction.RAISE}:
             profile.aggressive_chips += event.amount
+        if event.faced_bet:
+            profile.faced_bets += 1
+            if event.action == ObservedAction.FOLD:
+                profile.folded_to_bets += 1
+        if event.faced_raise:
+            profile.faced_raises += 1
+            if event.action == ObservedAction.FOLD:
+                profile.folded_to_raises += 1
 
     def record_many(self, events: Iterable[OpponentAction]) -> None:
         for event in events:
@@ -86,6 +121,20 @@ class OpponentTracker:
     def table_weakness(self, active_player_ids: Iterable[str] | None = None) -> float:
         profiles = self._selected_profiles(active_player_ids)
         return sum(profile.weakness for profile in profiles) / len(profiles) if profiles else 0.0
+
+    def estimated_fold_probability(
+        self,
+        active_player_ids: Iterable[str] | None = None,
+        facing_raise: bool = False,
+    ) -> float:
+        profiles = self._selected_profiles(active_player_ids)
+        if not profiles:
+            return 0.36 if facing_raise else 0.32
+        values = [
+            profile.fold_to_raise if facing_raise else profile.fold_to_bet
+            for profile in profiles
+        ]
+        return sum(values) / len(values)
 
     def _selected_profiles(
         self, active_player_ids: Iterable[str] | None

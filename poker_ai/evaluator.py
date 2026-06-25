@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import random
-from collections import Counter
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Sequence
 
 from treys import Card as TreysCard
@@ -22,20 +23,29 @@ class EquityResult:
 
 
 class MonteCarloEvaluator:
-    """Estimate showdown equity against uniformly random unknown hands."""
+    """Estimate equity with lightweight action-weighted opponent ranges."""
 
-    def __init__(self, simulations: int = 5_000, seed: int | None = None) -> None:
+    def __init__(
+        self,
+        simulations: int = 5_000,
+        seed: int | None = None,
+        cache_size: int = 256,
+    ) -> None:
         if simulations < 1:
             raise ValueError("simulations must be at least 1")
         self.simulations = simulations
         self._rng = random.Random(seed)
         self._evaluator = Evaluator()
+        self._cache_size = max(cache_size, 0)
+        self._cache: OrderedDict[tuple[object, ...], EquityResult] = OrderedDict()
 
     def estimate(
         self,
         hole_cards: Sequence[Card],
         community_cards: Sequence[Card],
         num_opponents: int,
+        simulations: int | None = None,
+        range_strengths: Sequence[float] | None = None,
     ) -> EquityResult:
         if len(hole_cards) != 2:
             raise ValueError("Texas Hold'em requires exactly two hole cards")
@@ -43,9 +53,30 @@ class MonteCarloEvaluator:
             raise ValueError("There can be at most five community cards")
         if num_opponents < 1:
             raise ValueError("num_opponents must be at least 1")
+        trials = simulations or self.simulations
+        if trials < 1:
+            raise ValueError("simulations must be at least 1")
+        strengths = tuple(
+            max(0.0, min(float(value), 1.0))
+            for value in (range_strengths or (0.0,) * num_opponents)
+        )
+        if len(strengths) != num_opponents:
+            raise ValueError("range_strengths must match num_opponents")
 
         known = tuple(hole_cards) + tuple(community_cards)
         ensure_unique(known)
+        cache_key = (
+            tuple(sorted(str(card) for card in hole_cards)),
+            tuple(str(card) for card in community_cards),
+            num_opponents,
+            trials,
+            tuple(round(value, 2) for value in strengths),
+        )
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self._cache.move_to_end(cache_key)
+            return cached
+
         known_set = set(known)
         # Preserve deck order so a fixed seed is repeatable across processes.
         unknown = [card for card in full_deck() if card not in known_set]
@@ -58,13 +89,23 @@ class MonteCarloEvaluator:
         outright_wins = 0
         ties = 0
 
-        for _ in range(self.simulations):
-            dealt = self._rng.sample(unknown, cards_needed)
-            opponent_hands = [
-                dealt[index : index + 2]
-                for index in range(0, 2 * num_opponents, 2)
-            ]
-            runout = dealt[2 * num_opponents :]
+        for _ in range(trials):
+            if any(strengths):
+                remaining = unknown.copy()
+                opponent_hands = []
+                for strength in strengths:
+                    hand = self._sample_weighted_hand(remaining, strength)
+                    opponent_hands.append(hand)
+                    remaining.remove(hand[0])
+                    remaining.remove(hand[1])
+                runout = self._rng.sample(remaining, 5 - len(community_cards))
+            else:
+                dealt = self._rng.sample(unknown, cards_needed)
+                opponent_hands = [
+                    dealt[index : index + 2]
+                    for index in range(0, 2 * num_opponents, 2)
+                ]
+                runout = dealt[2 * num_opponents :]
             board_cards = list(community_cards) + runout
             board = [self._to_treys(card) for card in board_cards]
 
@@ -86,12 +127,37 @@ class MonteCarloEvaluator:
             else:
                 ties += 1
 
-        return EquityResult(
-            equity=equity_total / self.simulations,
-            outright_win_rate=outright_wins / self.simulations,
-            tie_rate=ties / self.simulations,
-            simulations=self.simulations,
+        result = EquityResult(
+            equity=equity_total / trials,
+            outright_win_rate=outright_wins / trials,
+            tie_rate=ties / trials,
+            simulations=trials,
         )
+        if self._cache_size:
+            self._cache[cache_key] = result
+            self._cache.move_to_end(cache_key)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+        return result
+
+    def _sample_weighted_hand(
+        self, remaining: Sequence[Card], range_strength: float
+    ) -> list[Card]:
+        if range_strength <= 0.02:
+            return self._rng.sample(remaining, 2)
+        exponent = 1.0 + (4.5 * range_strength)
+        best_hand: list[Card] | None = None
+        best_weight = -1.0
+        for _ in range(10):
+            hand = self._rng.sample(remaining, 2)
+            quality = starting_hand_strength(hand)
+            weight = (0.12 + quality) ** exponent
+            if weight > best_weight:
+                best_hand, best_weight = hand, weight
+            if self._rng.random() <= weight:
+                return hand
+        assert best_hand is not None
+        return best_hand
 
     @staticmethod
     def _to_treys(card: Card) -> int:
@@ -116,12 +182,20 @@ def draw_strength(hole_cards: Sequence[Card], community_cards: Sequence[Card]) -
     ranks = {card.rank_value for card in known}
     if 14 in ranks:
         ranks.add(1)
-    best_window = max(
-        (len(ranks.intersection(range(start, start + 5))) for start in range(1, 11)),
-        default=0,
-    )
+    windows = [
+        ranks.intersection(range(start, start + 5))
+        for start in range(1, 11)
+    ]
+    best_window = max((len(window) for window in windows), default=0)
     if best_window == 4:
-        score += 0.40
+        four_card_windows = [
+            window for window in windows if len(window) == 4
+        ]
+        open_ended = any(
+            max(window) - min(window) == 3 and min(window) not in {1, 10}
+            for window in four_card_windows
+        )
+        score += 0.44 if open_ended else 0.30
     elif best_window == 3:
         score += 0.14
 
@@ -133,3 +207,40 @@ def draw_strength(hole_cards: Sequence[Card], community_cards: Sequence[Card]) -
         score += 0.10
 
     return min(score, 1.0)
+
+
+def starting_hand_strength(cards: Sequence[Card]) -> float:
+    """Cheap 0..1 preflop quality score used by charts and range sampling."""
+
+    if len(cards) != 2:
+        raise ValueError("Starting-hand strength requires two cards")
+    high, low = sorted((card.rank_value for card in cards), reverse=True)
+    suited = cards[0].suit == cards[1].suit
+    return _starting_class_strength(high, low, suited)
+
+
+@lru_cache(maxsize=169)
+def _starting_class_strength(high: int, low: int, suited: bool) -> float:
+    """Precompute each of the 169 canonical Hold'em starting-hand classes."""
+
+    pair = high == low
+    gap = high - low
+    if pair:
+        return min(1.0, 0.48 + (high / 27.0))
+
+    score = ((high - 2) / 12.0) * 0.52 + ((low - 2) / 12.0) * 0.22
+    if suited:
+        score += 0.08
+    if gap == 1:
+        score += 0.09
+    elif gap == 2:
+        score += 0.05
+    elif gap == 3:
+        score += 0.015
+    elif gap >= 5:
+        score -= 0.055
+    if high == 14:
+        score += 0.06
+    if low < 6 and high < 11:
+        score -= 0.04
+    return max(0.0, min(score, 1.0))

@@ -3,7 +3,15 @@
 from .cards import Card
 from .evaluator import EquityResult, MonteCarloEvaluator
 from .opponents import OpponentAction, OpponentTracker
-from .strategy import Action, Decision, GameStage, GameState, Position, StrategyEngine
+from .strategy import (
+    Action,
+    Decision,
+    GameStage,
+    GameState,
+    Personality,
+    Position,
+    StrategyEngine,
+)
 
 __all__ = [
     "Action",
@@ -15,7 +23,7 @@ __all__ = [
     "MonteCarloEvaluator",
     "OpponentAction",
     "OpponentTracker",
+    "Personality",
     "Position",
     "StrategyEngine",
 ]
-

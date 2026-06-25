@@ -15,6 +15,8 @@ def test_table_accepts_humans_and_bots_up_to_eight_seats() -> None:
     assert len(table.players) == 8
     assert sum(not player.is_bot for player in table.players) == 3
     assert sum(player.is_bot for player in table.players) == 5
+    personalities = {engine.personality for engine in table.engines.values()}
+    assert len(personalities) > 1
 
 
 @pytest.mark.parametrize(("humans", "bots"), [(1, 0), (1, 8), (0, 2)])
@@ -48,4 +50,3 @@ def test_raise_reopens_action_for_other_players() -> None:
     assert raiser not in table.pending
     assert len(table.pending) == 2
     assert table.current_bet >= table.big_blind * 2
-

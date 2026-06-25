@@ -5,8 +5,8 @@ Carlo simulation, compares it with pot odds, tracks simple opponent tendencies,
 and selects `fold`, `check`, `call`, `bet`, or `raise`.
 
 This is a decision aid and learning project, not a solved-poker/GTO engine. It
-assumes unknown opponent cards are uniformly random, so its quality improves
-when the opponent tracker and strategy rules are adapted to your game.
+uses action-weighted opponent ranges rather than assuming every opponent always
+holds two uniformly random cards.
 
 ## Project layout
 
@@ -125,6 +125,33 @@ minimum legal raise.
 This is intentionally a compact practice game. It supports one human versus
 one to seven bots and whole-number chips. It does not implement antes, rake,
 time controls, or networked players.
+
+## Stronger Pi-friendly strategy
+
+The bots use several inexpensive improvements instead of a large neural network
+or solver:
+
+- position- and player-count-aware preflop opening/continuing charts
+- weighted opponent ranges based on checks, calls, bets, raises, and sizing
+- estimated EV for folding, calling, and two or three candidate bet sizes
+- learned fold-to-bet, fold-to-raise, aggression, and participation tendencies
+- board texture, draw strength, effective stacks, and basic fold equity
+- tight-aggressive, loose-aggressive, balanced, and tricky bot personalities
+- dynamic simulation budgets and a small equity-result cache
+
+`--simulations` is now the maximum budget rather than the amount used for every
+decision. Preflop charts need relatively few trials, while difficult flop spots
+use more. Turn, river, and large-field decisions automatically use adjusted
+budgets to keep response times reasonable on Raspberry Pi hardware.
+
+For a Pi Zero 2 W, start with:
+
+```bash
+play-poker --bots 5 --simulations 800
+```
+
+Increase to 1,200–2,000 if decision time remains acceptable. Raising the number
+does not improve the preflop charts; it mainly stabilizes postflop equity.
 
 ## Graphical multiplayer table
 

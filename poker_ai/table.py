@@ -11,7 +11,14 @@ from treys import Evaluator
 from .cards import Card, full_deck
 from .evaluator import MonteCarloEvaluator
 from .opponents import ObservedAction, OpponentAction, OpponentTracker
-from .strategy import Action, GameStage, GameState, Position, StrategyEngine
+from .strategy import (
+    Action,
+    GameStage,
+    GameState,
+    Personality,
+    Position,
+    StrategyEngine,
+)
 
 
 @dataclass
@@ -73,11 +80,18 @@ class MultiplayerTable:
         ]
         self._rng = random.Random(self.seed)
         self.tracker = OpponentTracker()
+        personality_cycle = (
+            Personality.TIGHT_AGGRESSIVE,
+            Personality.LOOSE_AGGRESSIVE,
+            Personality.BALANCED,
+            Personality.TRICKY,
+        )
         self.engines = {
             player.player_id: StrategyEngine(
                 evaluator=MonteCarloEvaluator(self.simulations, self._seed_for(index)),
                 tracker=self.tracker,
                 seed=self._seed_for(index + 100),
+                personality=personality_cycle[index % len(personality_cycle)],
             )
             for index, player in enumerate(self.players)
             if player.is_bot
@@ -87,6 +101,7 @@ class MultiplayerTable:
         self.board: list[Card] = []
         self.events: list[TableEvent] = []
         self.street_actions: list[OpponentAction] = []
+        self.hand_actions: list[OpponentAction] = []
         self.stage = GameStage.PREFLOP
         self.dealer_index = -1
         self.small_blind_index = -1
@@ -132,6 +147,7 @@ class MultiplayerTable:
         self.board = []
         self.events = []
         self.street_actions = []
+        self.hand_actions = []
         self.stage = GameStage.PREFLOP
         self.current_bet = 0
         self.minimum_raise = self.big_blind
@@ -148,6 +164,7 @@ class MultiplayerTable:
 
         for index in funded:
             self.players[index].hole_cards = (self.deck.pop(), self.deck.pop())
+            self.tracker.mark_hand_seen(self.players[index].player_id)
 
         if len(funded) == 2:
             self.small_blind_index = self.dealer_index
@@ -197,6 +214,11 @@ class MultiplayerTable:
         player = self.players[index]
         legal = self.legal_actions(index)
         to_call = int(legal["to_call"])
+        pot_before_action = self.pot
+        faced_bet = to_call > 0
+        faced_raise = faced_bet and any(
+            event.action == ObservedAction.RAISE for event in self.street_actions
+        )
         action = action.lower()
         observed: ObservedAction
         paid = 0
@@ -246,8 +268,16 @@ class MultiplayerTable:
         else:
             raise ValueError("Unknown action")
 
-        event = OpponentAction(player.player_id, observed, paid)
+        event = OpponentAction(
+            player.player_id,
+            observed,
+            paid,
+            faced_bet=faced_bet,
+            faced_raise=faced_raise,
+            pot_before_action=pot_before_action,
+        )
         self.street_actions.append(event)
+        self.hand_actions.append(event)
         self.tracker.record(event)
         self._advance_after_action(index, raised)
 
@@ -260,18 +290,34 @@ class MultiplayerTable:
         legal = self.legal_actions(index)
         to_call = int(legal["to_call"])
         opponents = len(self.active_indices) - 1
+        active_opponents = tuple(
+            self.players[seat].player_id
+            for seat in self.active_indices
+            if seat != index
+        )
+        opponent_stacks = [
+            self.players[seat].stack
+            for seat in self.active_indices
+            if seat != index
+        ]
         state = GameState(
             hole_cards=player.hole_cards,
             community_cards=tuple(self.board),
             pot_size=self.pot,
             amount_to_call=to_call,
             opponent_actions=tuple(
-                event for event in self.street_actions if event.player_id != player.player_id
+                event for event in self.hand_actions if event.player_id != player.player_id
             ),
             num_opponents=max(opponents, 1),
             stage=self.stage,
             can_check=to_call == 0,
             position=self._position_for(index),
+            active_opponent_ids=active_opponents,
+            effective_stack=min(
+                player.stack,
+                max(opponent_stacks, default=player.stack),
+            ),
+            big_blind=self.big_blind,
         )
         decision = self.engines[player.player_id].decide(state)
         if to_call:
