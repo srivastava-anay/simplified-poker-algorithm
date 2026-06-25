@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from treys import Card as TreysCard
 from treys import Evaluator
 
-from .cards import Card, full_deck
+from .cards import Card, format_cards, full_deck
 from .evaluator import MonteCarloEvaluator
 from .opponents import ObservedAction, OpponentAction, OpponentTracker
 from .strategy import Action, GameStage, GameState, Position, StrategyEngine
@@ -513,6 +513,4 @@ class MultiplayerTable:
 
     @staticmethod
     def _cards(cards: tuple[Card, ...] | list[Card]) -> str:
-        suit_symbols = {"s": "♠", "h": "♥", "d": "♦", "c": "♣"}
-        return " ".join(f"{card.rank}{suit_symbols[card.suit]}" for card in cards)
-
+        return format_cards(cards)

@@ -10,7 +10,7 @@ from typing import Callable
 from treys import Card as TreysCard
 from treys import Evaluator
 
-from .cards import Card, full_deck
+from .cards import Card, format_cards, full_deck
 from .evaluator import MonteCarloEvaluator
 from .opponents import ObservedAction, OpponentAction, OpponentTracker
 from .strategy import Action, GameStage, GameState, Position, StrategyEngine
@@ -493,7 +493,7 @@ class HeadsUpGame:
 
     @staticmethod
     def _cards(cards: tuple[Card, ...] | list[Card]) -> str:
-        return " ".join(str(card) for card in cards)
+        return format_cards(cards)
 
 
 class TerminalPokerGame:
@@ -605,7 +605,7 @@ class TerminalPokerGame:
 
     @staticmethod
     def _cards(cards: tuple[Card, ...] | list[Card]) -> str:
-        return " ".join(str(card) for card in cards)
+        return format_cards(cards)
 
 
 def prompt_for_bot_count(
