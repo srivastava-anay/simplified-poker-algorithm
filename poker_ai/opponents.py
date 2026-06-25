@@ -24,6 +24,7 @@ class OpponentAction:
     faced_bet: bool = False
     faced_raise: bool = False
     pot_before_action: float = 0.0
+    street: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.action, ObservedAction):

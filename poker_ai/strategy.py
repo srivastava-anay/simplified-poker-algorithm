@@ -12,6 +12,7 @@ from .cards import Card, ensure_unique
 from .evaluator import (
     EquityResult,
     MonteCarloEvaluator,
+    RangeProfile,
     draw_strength,
     starting_hand_strength,
 )
@@ -143,9 +144,9 @@ class StrategyEngine:
 
     def decide(self, state: GameState) -> Decision:
         aggression, weakness = self._behavior_signals(state.opponent_actions)
-        range_strengths = self._opponent_range_strengths(state)
+        range_profiles = self._opponent_range_profiles(state)
         simulations = self._simulation_budget(state)
-        equity = self._estimate_equity(state, simulations, range_strengths)
+        equity = self._estimate_equity(state, simulations, range_profiles)
         pot_odds = self._pot_odds(state.pot_size, state.amount_to_call)
         texture = self._board_texture(state.community_cards)
         draw = draw_strength(state.hole_cards, state.community_cards)
@@ -166,13 +167,13 @@ class StrategyEngine:
     ) -> Decision:
         score = starting_hand_strength(state.hole_cards)
         position_threshold = {
-            Position.EARLY: 0.63,
-            Position.MIDDLE: 0.55,
-            Position.LATE: 0.46,
+            Position.EARLY: 0.59,
+            Position.MIDDLE: 0.51,
+            Position.LATE: 0.42,
         }[state.position]
         threshold = (
             position_threshold
-            + min(0.14, 0.035 * (state.num_opponents - 1))
+            + min(0.11, 0.028 * (state.num_opponents - 1))
             - self.settings.looseness
         )
         facing_raise = any(
@@ -184,11 +185,11 @@ class StrategyEngine:
             else 0.0
         )
         if state.amount_to_call:
-            threshold += 0.03 + (0.05 * price_pressure) + (0.035 if facing_raise else 0.0)
+            threshold += 0.015 + (0.035 * price_pressure) + (0.025 if facing_raise else 0.0)
 
         premium = score >= max(0.78, threshold + 0.15)
         playable = score >= threshold
-        marginal = score >= threshold - 0.09
+        marginal = score >= threshold - 0.13
         call_ev = self._call_ev(
             equity.equity, state.pot_size, state.amount_to_call
         )
@@ -202,7 +203,7 @@ class StrategyEngine:
                     Action.RAISE, amount, equity, pot_odds, False,
                     "Premium preflop chart hand; raise for value.",
                 )
-            if playable and call_ev >= -state.big_blind * 0.25:
+            if playable and call_ev >= -state.big_blind * 0.55:
                 if (
                     score >= threshold + 0.07
                     and fold_equity >= 0.30
@@ -219,8 +220,14 @@ class StrategyEngine:
                     Action.CALL, state.amount_to_call, equity, pot_odds, False,
                     "Preflop chart and price support a call.",
                 )
-            if marginal and call_ev >= -state.big_blind * (
-                0.4 + self.settings.risk_tolerance
+            cheap_call = state.amount_to_call <= max(
+                state.big_blind, state.pot_size * 0.18
+            )
+            if marginal and (
+                call_ev >= -state.big_blind * (
+                    0.75 + self.settings.risk_tolerance
+                )
+                or cheap_call
             ):
                 return self._decision(
                     Action.CALL, state.amount_to_call, equity, pot_odds, False,
@@ -277,12 +284,13 @@ class StrategyEngine:
         aggressive_options = [
             (
                 amount,
-                self._aggressive_ev(
+                self._response_adjusted_aggressive_ev(
                     equity.equity,
                     state.pot_size,
                     amount,
                     fold_equity,
                     state.num_opponents,
+                    texture,
                 ),
             )
             for amount in candidates
@@ -319,13 +327,21 @@ class StrategyEngine:
                     Action.RAISE, best_amount, equity, pot_odds, True,
                     "Draw, blockers, and fold equity support a controlled semi-bluff.",
                 )
-            tolerance = state.big_blind * (
-                0.12 + self.settings.risk_tolerance
+            defense_margin = (
+                0.025
+                + 0.055 * draw
+                + (0.018 if state.num_opponents == 1 else 0.0)
+                + max(self.settings.risk_tolerance, 0.0)
             )
-            if call_ev >= -tolerance:
+            required_equity = max(0.0, pot_odds - defense_margin)
+            tolerance = max(
+                state.big_blind * (0.65 + self.settings.risk_tolerance),
+                state.pot_size * (0.025 + 0.035 * draw),
+            )
+            if equity.equity >= required_equity or call_ev >= -tolerance:
                 return self._decision(
                     Action.CALL, state.amount_to_call, equity, pot_odds, False,
-                    "Calling has non-negative or acceptably close estimated EV.",
+                    "Equity, price, or draw potential supports defending.",
                 )
             return self._decision(
                 Action.FOLD, 0.0, equity, pot_odds, False,
@@ -355,7 +371,7 @@ class StrategyEngine:
         self,
         state: GameState,
         simulations: int,
-        range_strengths: tuple[float, ...],
+        range_profiles: tuple[RangeProfile, ...],
     ) -> EquityResult:
         try:
             return self.evaluator.estimate(
@@ -363,7 +379,7 @@ class StrategyEngine:
                 state.community_cards,
                 state.num_opponents,
                 simulations=simulations,
-                range_strengths=range_strengths,
+                range_profiles=range_profiles,
             )
         except TypeError:
             # Keeps simple test doubles and third-party evaluators compatible.
@@ -383,7 +399,9 @@ class StrategyEngine:
         pressure_factor = 1.12 if state.amount_to_call > state.pot_size * 0.4 else 1.0
         return min(maximum, max(120, int(maximum * street_factor * opponent_factor * pressure_factor)))
 
-    def _opponent_range_strengths(self, state: GameState) -> tuple[float, ...]:
+    def _opponent_range_profiles(
+        self, state: GameState
+    ) -> tuple[RangeProfile, ...]:
         by_player: dict[str, list[OpponentAction]] = defaultdict(list)
         for event in state.opponent_actions:
             by_player[event.player_id].append(event)
@@ -391,11 +409,16 @@ class StrategyEngine:
         if not player_ids:
             player_ids = list(by_player)
 
-        strengths = []
+        profiles = []
         for player_id in player_ids[: state.num_opponents]:
             profile = self.tracker.profile(player_id)
-            strength = 0.08 + 0.24 * (1.0 - profile.voluntary_action_rate)
-            for event in by_player.get(player_id, ()):
+            preflop_strength = 0.08 + 0.24 * (
+                1.0 - profile.voluntary_action_rate
+            )
+            board_affinity = 0.04
+            events = by_player.get(player_id, ())
+            for sequence_index, event in enumerate(events):
+                later_action_weight = min(1.35, 1.0 + 0.08 * sequence_index)
                 action_signal = {
                     ObservedAction.FOLD: -0.10,
                     ObservedAction.CHECK: -0.04,
@@ -405,19 +428,38 @@ class StrategyEngine:
                 }[event.action]
                 if event.action in {ObservedAction.BET, ObservedAction.RAISE}:
                     action_signal *= 1.0 - (0.45 * profile.aggression)
-                strength += action_signal
+                if event.street == GameStage.PREFLOP.value or not event.street:
+                    preflop_strength += action_signal * later_action_weight
+                else:
+                    board_affinity += action_signal * later_action_weight
                 if event.pot_before_action:
-                    strength += 0.10 * min(
-                        event.amount / event.pot_before_action, 1.5
+                    sizing_signal = 0.12 * min(
+                        event.amount / event.pot_before_action, 1.75
                     )
-            strengths.append(max(0.0, min(strength, 0.95)))
+                    if event.street == GameStage.PREFLOP.value:
+                        preflop_strength += sizing_signal
+                    else:
+                        board_affinity += sizing_signal
+            profiles.append(
+                RangeProfile(
+                    max(0.0, min(preflop_strength, 0.95)),
+                    max(0.0, min(board_affinity, 0.95)),
+                )
+            )
 
-        observed_average = (
-            sum(strengths) / len(strengths) if strengths else 0.12
+        average_preflop = (
+            sum(item.preflop_strength for item in profiles) / len(profiles)
+            if profiles
+            else 0.12
         )
-        while len(strengths) < state.num_opponents:
-            strengths.append(observed_average)
-        return tuple(strengths)
+        average_affinity = (
+            sum(item.board_affinity for item in profiles) / len(profiles)
+            if profiles
+            else 0.04
+        )
+        while len(profiles) < state.num_opponents:
+            profiles.append(RangeProfile(average_preflop, average_affinity))
+        return tuple(profiles)
 
     def _fold_equity(
         self, state: GameState, aggression: float, weakness: float
@@ -484,15 +526,31 @@ class StrategyEngine:
         return equity * (pot + call) - call
 
     @staticmethod
-    def _aggressive_ev(
+    def _response_adjusted_aggressive_ev(
         equity: float,
         pot: float,
         investment: float,
         fold_probability: float,
         opponents: int,
+        texture: BoardTexture,
     ) -> float:
-        fold_all = fold_probability ** max(opponents, 1)
-        called_ev = equity * (pot + (2 * investment)) - investment
+        opponents = max(opponents, 1)
+        pot_fraction = investment / max(pot, 1.0)
+        size_pressure = 0.16 * min(pot_fraction, 1.5)
+        texture_resistance = 0.10 * texture.wetness
+        per_opponent_fold = max(
+            0.05,
+            min(
+                fold_probability + size_pressure - texture_resistance,
+                0.86,
+            ),
+        )
+        fold_all = per_opponent_fold ** opponents
+        expected_callers = opponents * (1.0 - per_opponent_fold)
+        called_pot = pot + investment + (expected_callers * investment)
+        # More callers reduce realization even when raw showdown equity is good.
+        realization = max(0.72, 1.0 - 0.055 * max(expected_callers - 1.0, 0.0))
+        called_ev = (equity * realization * called_pot) - investment
         return fold_all * pot + (1.0 - fold_all) * called_ev
 
     @staticmethod

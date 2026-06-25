@@ -1,6 +1,8 @@
 from poker_ai.cards import parse_cards
 from poker_ai.evaluator import (
     MonteCarloEvaluator,
+    RangeProfile,
+    board_affinity,
     draw_strength,
     starting_hand_strength,
 )
@@ -48,3 +50,20 @@ def test_equity_cache_returns_same_result_without_more_sampling() -> None:
     )
     assert first is second
     assert first.simulations == 120
+
+
+def test_board_affinity_prefers_top_pair_to_unpaired_overcards() -> None:
+    board = parse_cards(["Ks", "7h", "2c"])
+    assert board_affinity(parse_cards(["Kd", "Qc"]), board) > board_affinity(
+        parse_cards(["As", "Qd"]), board
+    )
+
+
+def test_range_profiles_are_supported_by_weighted_simulation() -> None:
+    result = MonteCarloEvaluator(simulations=100, seed=3).estimate(
+        parse_cards(["As", "Kd"]),
+        parse_cards(["Qs", "7h", "2c"]),
+        1,
+        range_profiles=(RangeProfile(0.5, 0.6),),
+    )
+    assert 0.0 <= result.equity <= 1.0

@@ -22,6 +22,20 @@ class EquityResult:
     simulations: int
 
 
+@dataclass(frozen=True)
+class RangeProfile:
+    """Compact opponent range model used during weighted sampling."""
+
+    preflop_strength: float = 0.0
+    board_affinity: float = 0.0
+
+    def clamped(self) -> "RangeProfile":
+        return RangeProfile(
+            max(0.0, min(self.preflop_strength, 1.0)),
+            max(0.0, min(self.board_affinity, 1.0)),
+        )
+
+
 class MonteCarloEvaluator:
     """Estimate equity with lightweight action-weighted opponent ranges."""
 
@@ -46,6 +60,7 @@ class MonteCarloEvaluator:
         num_opponents: int,
         simulations: int | None = None,
         range_strengths: Sequence[float] | None = None,
+        range_profiles: Sequence[RangeProfile] | None = None,
     ) -> EquityResult:
         if len(hole_cards) != 2:
             raise ValueError("Texas Hold'em requires exactly two hole cards")
@@ -56,12 +71,15 @@ class MonteCarloEvaluator:
         trials = simulations or self.simulations
         if trials < 1:
             raise ValueError("simulations must be at least 1")
-        strengths = tuple(
-            max(0.0, min(float(value), 1.0))
-            for value in (range_strengths or (0.0,) * num_opponents)
-        )
-        if len(strengths) != num_opponents:
-            raise ValueError("range_strengths must match num_opponents")
+        if range_profiles is not None:
+            profiles = tuple(profile.clamped() for profile in range_profiles)
+        else:
+            profiles = tuple(
+                RangeProfile(max(0.0, min(float(value), 1.0)), 0.0)
+                for value in (range_strengths or (0.0,) * num_opponents)
+            )
+        if len(profiles) != num_opponents:
+            raise ValueError("range profiles must match num_opponents")
 
         known = tuple(hole_cards) + tuple(community_cards)
         ensure_unique(known)
@@ -70,7 +88,13 @@ class MonteCarloEvaluator:
             tuple(str(card) for card in community_cards),
             num_opponents,
             trials,
-            tuple(round(value, 2) for value in strengths),
+            tuple(
+                (
+                    round(profile.preflop_strength, 2),
+                    round(profile.board_affinity, 2),
+                )
+                for profile in profiles
+            ),
         )
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -90,11 +114,16 @@ class MonteCarloEvaluator:
         ties = 0
 
         for _ in range(trials):
-            if any(strengths):
+            if any(
+                profile.preflop_strength > 0.0 or profile.board_affinity > 0.0
+                for profile in profiles
+            ):
                 remaining = unknown.copy()
                 opponent_hands = []
-                for strength in strengths:
-                    hand = self._sample_weighted_hand(remaining, strength)
+                for profile in profiles:
+                    hand = self._sample_weighted_hand(
+                        remaining, community_cards, profile
+                    )
                     opponent_hands.append(hand)
                     remaining.remove(hand[0])
                     remaining.remove(hand[1])
@@ -141,16 +170,27 @@ class MonteCarloEvaluator:
         return result
 
     def _sample_weighted_hand(
-        self, remaining: Sequence[Card], range_strength: float
+        self,
+        remaining: Sequence[Card],
+        community_cards: Sequence[Card],
+        profile: RangeProfile,
     ) -> list[Card]:
-        if range_strength <= 0.02:
+        if profile.preflop_strength <= 0.02 and profile.board_affinity <= 0.02:
             return self._rng.sample(remaining, 2)
-        exponent = 1.0 + (4.5 * range_strength)
+        exponent = 1.0 + (3.5 * profile.preflop_strength)
         best_hand: list[Card] | None = None
         best_weight = -1.0
-        for _ in range(10):
+        candidate_count = 6 + int(4 * max(
+            profile.preflop_strength, profile.board_affinity
+        ))
+        for _ in range(candidate_count):
             hand = self._rng.sample(remaining, 2)
-            quality = starting_hand_strength(hand)
+            preflop_quality = starting_hand_strength(hand)
+            board_quality = board_affinity(hand, community_cards)
+            quality = (
+                preflop_quality * (1.0 - 0.62 * profile.board_affinity)
+                + board_quality * (0.62 * profile.board_affinity)
+            )
             weight = (0.12 + quality) ** exponent
             if weight > best_weight:
                 best_hand, best_weight = hand, weight
@@ -207,6 +247,38 @@ def draw_strength(hole_cards: Sequence[Card], community_cards: Sequence[Card]) -
         score += 0.10
 
     return min(score, 1.0)
+
+
+def board_affinity(
+    hole_cards: Sequence[Card], community_cards: Sequence[Card]
+) -> float:
+    """Cheap made-hand/draw fit score for action-weighted range sampling."""
+
+    if not community_cards:
+        return starting_hand_strength(hole_cards)
+    board_ranks = Counter(card.rank_value for card in community_cards)
+    hole_ranks = Counter(card.rank_value for card in hole_cards)
+    score = 0.0
+
+    matches = sum(
+        min(count, board_ranks.get(rank, 0))
+        for rank, count in hole_ranks.items()
+    )
+    if matches:
+        score += 0.34 + 0.18 * min(matches, 2)
+    if hole_cards[0].rank_value == hole_cards[1].rank_value:
+        score += 0.24
+    if any(
+        board_ranks.get(rank, 0) >= 2 for rank in hole_ranks
+    ):
+        score += 0.22
+
+    score += 0.34 * draw_strength(hole_cards, community_cards)
+    board_high = max(card.rank_value for card in community_cards)
+    score += 0.055 * sum(
+        card.rank_value > board_high for card in hole_cards
+    )
+    return max(0.0, min(score, 1.0))
 
 
 def starting_hand_strength(cards: Sequence[Card]) -> float:

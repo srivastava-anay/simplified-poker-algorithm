@@ -1,5 +1,6 @@
 from poker_ai.cards import parse_cards
 from poker_ai.evaluator import EquityResult
+from poker_ai.opponents import OpponentAction
 from poker_ai.strategy import (
     Action,
     GameStage,
@@ -134,3 +135,49 @@ def test_dynamic_budget_uses_fewer_preflop_trials() -> None:
         big_blind=10,
     )
     assert engine._simulation_budget(preflop) < engine._simulation_budget(flop)
+
+
+def test_defends_slightly_below_raw_pot_odds() -> None:
+    engine = StrategyEngine(evaluator=FixedEvaluator(0.22), seed=4)
+    decision = engine.decide(state(call=30, can_check=False))
+    assert decision.action == Action.CALL
+
+
+def test_later_street_aggression_increases_board_affinity() -> None:
+    engine = StrategyEngine(evaluator=FixedEvaluator(0.5), seed=1)
+    hole = parse_cards(["As", "Kd"])
+    board = parse_cards(["Qs", "7h", "2c"])
+    passive = GameState(
+        hole_cards=(hole[0], hole[1]),
+        community_cards=board,
+        pot_size=100,
+        amount_to_call=20,
+        opponent_actions=(OpponentAction("v", "check", street="flop"),),
+        num_opponents=1,
+        stage=GameStage.FLOP,
+        can_check=False,
+        active_opponent_ids=("v",),
+    )
+    aggressive = GameState(
+        hole_cards=(hole[0], hole[1]),
+        community_cards=board,
+        pot_size=100,
+        amount_to_call=20,
+        opponent_actions=(
+            OpponentAction(
+                "v",
+                "raise",
+                amount=70,
+                pot_before_action=100,
+                street="flop",
+            ),
+        ),
+        num_opponents=1,
+        stage=GameStage.FLOP,
+        can_check=False,
+        active_opponent_ids=("v",),
+    )
+    assert (
+        engine._opponent_range_profiles(aggressive)[0].board_affinity
+        > engine._opponent_range_profiles(passive)[0].board_affinity
+    )

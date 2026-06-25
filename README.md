@@ -132,8 +132,10 @@ The bots use several inexpensive improvements instead of a large neural network
 or solver:
 
 - position- and player-count-aware preflop opening/continuing charts
-- weighted opponent ranges based on checks, calls, bets, raises, and sizing
-- estimated EV for folding, calling, and two or three candidate bet sizes
+- weighted opponent ranges based on action sequence, street, sizing, likely
+  preflop strength, and how well candidate hands connect with the board
+- response-adjusted EV for folding, calling, and two or three candidate bet
+  sizes, including estimated folds and callers at each size
 - learned fold-to-bet, fold-to-raise, aggression, and participation tendencies
 - board texture, draw strength, effective stacks, and basic fold equity
 - tight-aggressive, loose-aggressive, balanced, and tricky bot personalities
@@ -152,6 +154,10 @@ play-poker --bots 5 --simulations 800
 
 Increase to 1,200–2,000 if decision time remains acceptable. Raising the number
 does not improve the preflop charts; it mainly stabilizes postflop equity.
+
+Bots use a small defense margin around exact pot odds instead of folding every
+slightly negative estimate. Cheap calls, heads-up pots, and useful draws receive
+more latitude; very weak hands facing expensive bets still fold.
 
 ## Graphical multiplayer table
 

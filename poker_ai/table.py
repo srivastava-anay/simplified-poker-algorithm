@@ -275,6 +275,7 @@ class MultiplayerTable:
             faced_bet=faced_bet,
             faced_raise=faced_raise,
             pot_before_action=pot_before_action,
+            street=self.stage.value,
         )
         self.street_actions.append(event)
         self.hand_actions.append(event)
