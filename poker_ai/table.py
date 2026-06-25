@@ -314,6 +314,11 @@ class MultiplayerTable:
             can_check=to_call == 0,
             position=self._position_for(index),
             active_opponent_ids=active_opponents,
+            hero_actions=tuple(
+                event
+                for event in self.hand_actions
+                if event.player_id == player.player_id
+            ),
             effective_stack=min(
                 player.stack,
                 max(opponent_stacks, default=player.stack),

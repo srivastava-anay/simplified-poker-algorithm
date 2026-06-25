@@ -12,7 +12,6 @@ from .cards import Card, ensure_unique
 from .evaluator import (
     EquityResult,
     MonteCarloEvaluator,
-    RangeProfile,
     draw_strength,
     starting_hand_strength,
 )
@@ -86,6 +85,7 @@ class GameState:
     active_opponent_ids: tuple[str, ...] = ()
     effective_stack: float | None = None
     big_blind: float = 1.0
+    hero_actions: tuple[OpponentAction, ...] = ()
 
     def __post_init__(self) -> None:
         ensure_unique(self.hole_cards + self.community_cards)
@@ -124,6 +124,28 @@ class BoardTexture:
     high_cards: int
     paired: bool
     monotone: bool
+    flush_pressure: float = 0.0
+    straight_pressure: float = 0.0
+
+
+@dataclass(frozen=True)
+class BluffSignals:
+    draw_equity: float
+    blocker_strength: float
+    missed_draw: float
+    scare_card: float
+    opponent_weakness: float
+
+    @property
+    def total(self) -> float:
+        return min(
+            1.0,
+            0.25 * self.draw_equity
+            + 0.25 * self.blocker_strength
+            + 0.18 * self.missed_draw
+            + 0.17 * self.scare_card
+            + 0.15 * self.opponent_weakness,
+        )
 
 
 class StrategyEngine:
@@ -144,18 +166,30 @@ class StrategyEngine:
 
     def decide(self, state: GameState) -> Decision:
         aggression, weakness = self._behavior_signals(state.opponent_actions)
-        range_profiles = self._opponent_range_profiles(state)
+        range_strengths = self._opponent_range_strengths(state)
         simulations = self._simulation_budget(state)
-        equity = self._estimate_equity(state, simulations, range_profiles)
+        equity = self._estimate_equity(state, simulations, range_strengths)
         pot_odds = self._pot_odds(state.pot_size, state.amount_to_call)
         texture = self._board_texture(state.community_cards)
         draw = draw_strength(state.hole_cards, state.community_cards)
         fold_equity = self._fold_equity(state, aggression, weakness)
+        daring = self._daring_factor(state)
+        bluff_signals = self._bluff_signals(state, draw, weakness, texture)
 
         if state.stage == GameStage.PREFLOP:
-            return self._decide_preflop(state, equity, pot_odds, fold_equity)
+            return self._decide_preflop(
+                state, equity, pot_odds, fold_equity, daring
+            )
         return self._decide_postflop(
-            state, equity, pot_odds, fold_equity, draw, texture
+            state,
+            equity,
+            pot_odds,
+            fold_equity,
+            draw,
+            texture,
+            bluff_signals,
+            daring,
+            aggression,
         )
 
     def _decide_preflop(
@@ -164,6 +198,7 @@ class StrategyEngine:
         equity: EquityResult,
         pot_odds: float,
         fold_equity: float,
+        daring: float,
     ) -> Decision:
         score = starting_hand_strength(state.hole_cards)
         position_threshold = {
@@ -204,10 +239,16 @@ class StrategyEngine:
                     "Premium preflop chart hand; raise for value.",
                 )
             if playable and call_ev >= -state.big_blind * 0.55:
+                calls_before = sum(
+                    action.action == ObservedAction.CALL
+                    for action in state.opponent_actions
+                )
+                squeeze_bonus = min(0.16, calls_before * 0.055)
                 if (
-                    score >= threshold + 0.07
-                    and fold_equity >= 0.30
-                    and self._rng.random() < 0.45 + self.settings.aggression
+                    score >= threshold + 0.07 - squeeze_bonus
+                    and fold_equity >= 0.26
+                    and self._rng.random()
+                    < 0.43 + self.settings.aggression + 0.16 * daring
                 ):
                     amount = self._raise_size(
                         state, 0.58 * self.settings.size_multiplier
@@ -240,6 +281,12 @@ class StrategyEngine:
 
         if premium or playable:
             strength = 0.72 if premium else 0.52 + (score - threshold) * 0.7
+            if (
+                state.position == Position.LATE
+                and fold_equity >= 0.42
+                and score >= threshold - 0.05
+            ):
+                strength += 0.08 * daring
             amount = self._bet_size(
                 state, strength * self.settings.size_multiplier, preflop=True
             )
@@ -265,6 +312,9 @@ class StrategyEngine:
         fold_equity: float,
         draw: float,
         texture: BoardTexture,
+        bluff_signals: BluffSignals,
+        daring: float,
+        opponent_aggression: float,
     ) -> Decision:
         fair_share = 1.0 / (state.num_opponents + 1)
         value_threshold = min(
@@ -274,9 +324,18 @@ class StrategyEngine:
                 0.52 if state.num_opponents == 1 else 0.38,
             ),
         )
-        value_threshold -= self.settings.aggression * 0.12
+        calling_station = max(0.0, 0.38 - fold_equity)
+        value_threshold -= (
+            self.settings.aggression * 0.12
+            + 0.10 * calling_station
+            + 0.025 * daring
+        )
         strong = equity.equity >= value_threshold
         very_strong = equity.equity >= min(0.85, value_threshold + 0.18)
+        medium_strength = equity.equity >= max(
+            pot_odds + 0.05,
+            value_threshold - 0.16,
+        )
         call_ev = self._call_ev(
             equity.equity, state.pot_size, state.amount_to_call
         )
@@ -284,13 +343,12 @@ class StrategyEngine:
         aggressive_options = [
             (
                 amount,
-                self._response_adjusted_aggressive_ev(
+                self._aggressive_ev(
                     equity.equity,
                     state.pot_size,
                     amount,
                     fold_equity,
                     state.num_opponents,
-                    texture,
                 ),
             )
             for amount in candidates
@@ -298,22 +356,35 @@ class StrategyEngine:
         best_amount, best_raise_ev = max(
             aggressive_options, key=lambda item: item[1]
         )
-        bluff_support = (
-            draw >= 0.20
-            or texture.wetness >= 0.55
-            or (texture.paired and state.num_opponents == 1)
+        bluff_support = bluff_signals.total >= 0.16
+        base_bluff_frequency = (
+            0.035
+            + 0.22 * fold_equity
+            + 0.20 * bluff_signals.total
+            + 0.055 * daring
         )
+        if state.stage == GameStage.RIVER:
+            base_bluff_frequency += (
+                0.08 * bluff_signals.blocker_strength
+                + 0.06 * bluff_signals.missed_draw
+            )
+        opponent_penalty = max(1.0, state.num_opponents ** 1.35)
+        bluff_cap = 0.38 if state.num_opponents == 1 else 0.14
         bluff_frequency = min(
-            0.22,
-            (0.04 + 0.18 * fold_equity + 0.08 * draw)
+            bluff_cap,
+            base_bluff_frequency
             * self.settings.bluff_multiplier
-            / max(state.num_opponents, 1),
+            / opponent_penalty,
         )
-        semi_bluff = (
+        bluff_ev_hurdle = state.big_blind * (0.20 - 0.16 * daring)
+        aggressive_bluff = (
             not strong
             and bluff_support
-            and best_raise_ev > max(0.0, call_ev) + state.big_blind * 0.15
+            and best_raise_ev > max(0.0, call_ev) + bluff_ev_hurdle
             and self._rng.random() < bluff_frequency
+        )
+        bluff_amount = self._bluff_size(
+            state, texture, bluff_signals, daring
         )
 
         if state.amount_to_call:
@@ -322,15 +393,21 @@ class StrategyEngine:
                     Action.RAISE, best_amount, equity, pot_odds, False,
                     "Value raise has higher estimated EV than calling.",
                 )
-            if semi_bluff:
+            if aggressive_bluff:
                 return self._decision(
-                    Action.RAISE, best_amount, equity, pot_odds, True,
-                    "Draw, blockers, and fold equity support a controlled semi-bluff.",
+                    Action.RAISE, max(best_amount, bluff_amount), equity, pot_odds, True,
+                    "Blockers, draw history, fold equity, and controlled daring support a bluff raise.",
                 )
+            bluff_catcher_bonus = (
+                0.018 * opponent_aggression
+                if state.num_opponents == 1
+                else 0.0
+            )
             defense_margin = (
                 0.025
                 + 0.055 * draw
                 + (0.018 if state.num_opponents == 1 else 0.0)
+                + bluff_catcher_bonus
                 + max(self.settings.risk_tolerance, 0.0)
             )
             required_equity = max(0.0, pot_odds - defense_margin)
@@ -348,15 +425,48 @@ class StrategyEngine:
                 "Calling has materially negative estimated EV.",
             )
 
-        if strong and best_raise_ev > state.big_blind * 0.1:
+        low_spr = self._stack_to_pot_ratio(state) <= 1.4
+        slowplay = (
+            very_strong
+            and texture.wetness <= 0.24
+            and not low_spr
+            and self.personality in {Personality.BALANCED, Personality.TRICKY}
+            and self._rng.random() < 0.08 + 0.12 * daring
+        )
+        if slowplay:
             return self._decision(
-                Action.BET, best_amount, equity, pot_odds, False,
+                Action.CHECK, 0.0, equity, pot_odds, False,
+                "Occasional dry-board slowplay protects the checking range.",
+            )
+        if strong and (
+            best_raise_ev > state.big_blind * 0.1 or low_spr
+        ):
+            value_amount = (
+                max(candidates)
+                if very_strong or calling_station >= 0.10
+                else best_amount
+            )
+            return self._decision(
+                Action.BET, value_amount, equity, pot_odds, False,
                 "Best candidate size produces positive value-bet EV.",
             )
-        if semi_bluff:
+        protection_bet = (
+            state.stage in {GameStage.FLOP, GameStage.TURN}
+            and medium_strength
+            and texture.wetness >= 0.48
+            and state.num_opponents <= 2
+            and self._rng.random() < 0.48 + 0.18 * daring
+        )
+        if protection_bet:
+            amount = self._protection_size(state, texture)
             return self._decision(
-                Action.BET, best_amount, equity, pot_odds, True,
-                "Controlled semi-bluff is supported by fold and draw equity.",
+                Action.BET, amount, equity, pot_odds, False,
+                "Medium-strength hand bets for protection on a dynamic board.",
+            )
+        if aggressive_bluff:
+            return self._decision(
+                Action.BET, bluff_amount, equity, pot_odds, True,
+                "Blockers, missed draws, scare cards, and fold equity support a controlled bluff.",
             )
         return self._decision(
             Action.CHECK if state.can_check else Action.FOLD,
@@ -371,7 +481,7 @@ class StrategyEngine:
         self,
         state: GameState,
         simulations: int,
-        range_profiles: tuple[RangeProfile, ...],
+        range_strengths: tuple[float, ...],
     ) -> EquityResult:
         try:
             return self.evaluator.estimate(
@@ -379,7 +489,7 @@ class StrategyEngine:
                 state.community_cards,
                 state.num_opponents,
                 simulations=simulations,
-                range_profiles=range_profiles,
+                range_strengths=range_strengths,
             )
         except TypeError:
             # Keeps simple test doubles and third-party evaluators compatible.
@@ -399,9 +509,7 @@ class StrategyEngine:
         pressure_factor = 1.12 if state.amount_to_call > state.pot_size * 0.4 else 1.0
         return min(maximum, max(120, int(maximum * street_factor * opponent_factor * pressure_factor)))
 
-    def _opponent_range_profiles(
-        self, state: GameState
-    ) -> tuple[RangeProfile, ...]:
+    def _opponent_range_strengths(self, state: GameState) -> tuple[float, ...]:
         by_player: dict[str, list[OpponentAction]] = defaultdict(list)
         for event in state.opponent_actions:
             by_player[event.player_id].append(event)
@@ -409,16 +517,11 @@ class StrategyEngine:
         if not player_ids:
             player_ids = list(by_player)
 
-        profiles = []
+        strengths = []
         for player_id in player_ids[: state.num_opponents]:
             profile = self.tracker.profile(player_id)
-            preflop_strength = 0.08 + 0.24 * (
-                1.0 - profile.voluntary_action_rate
-            )
-            board_affinity = 0.04
-            events = by_player.get(player_id, ())
-            for sequence_index, event in enumerate(events):
-                later_action_weight = min(1.35, 1.0 + 0.08 * sequence_index)
+            strength = 0.08 + 0.24 * (1.0 - profile.voluntary_action_rate)
+            for event in by_player.get(player_id, ()):
                 action_signal = {
                     ObservedAction.FOLD: -0.10,
                     ObservedAction.CHECK: -0.04,
@@ -428,38 +531,19 @@ class StrategyEngine:
                 }[event.action]
                 if event.action in {ObservedAction.BET, ObservedAction.RAISE}:
                     action_signal *= 1.0 - (0.45 * profile.aggression)
-                if event.street == GameStage.PREFLOP.value or not event.street:
-                    preflop_strength += action_signal * later_action_weight
-                else:
-                    board_affinity += action_signal * later_action_weight
+                strength += action_signal
                 if event.pot_before_action:
-                    sizing_signal = 0.12 * min(
-                        event.amount / event.pot_before_action, 1.75
+                    strength += 0.10 * min(
+                        event.amount / event.pot_before_action, 1.5
                     )
-                    if event.street == GameStage.PREFLOP.value:
-                        preflop_strength += sizing_signal
-                    else:
-                        board_affinity += sizing_signal
-            profiles.append(
-                RangeProfile(
-                    max(0.0, min(preflop_strength, 0.95)),
-                    max(0.0, min(board_affinity, 0.95)),
-                )
-            )
+            strengths.append(max(0.0, min(strength, 0.95)))
 
-        average_preflop = (
-            sum(item.preflop_strength for item in profiles) / len(profiles)
-            if profiles
-            else 0.12
+        observed_average = (
+            sum(strengths) / len(strengths) if strengths else 0.12
         )
-        average_affinity = (
-            sum(item.board_affinity for item in profiles) / len(profiles)
-            if profiles
-            else 0.04
-        )
-        while len(profiles) < state.num_opponents:
-            profiles.append(RangeProfile(average_preflop, average_affinity))
-        return tuple(profiles)
+        while len(strengths) < state.num_opponents:
+            strengths.append(observed_average)
+        return tuple(strengths)
 
     def _fold_equity(
         self, state: GameState, aggression: float, weakness: float
@@ -493,6 +577,220 @@ class StrategyEngine:
             (historic_weakness + weakness) / 2,
         )
 
+    def _daring_factor(self, state: GameState) -> float:
+        """Return bounded decision noise that changes appetite, not hand strength."""
+
+        personality_bias = {
+            Personality.TIGHT_AGGRESSIVE: -0.12,
+            Personality.BALANCED: 0.0,
+            Personality.LOOSE_AGGRESSIVE: 0.16,
+            Personality.TRICKY: 0.12,
+        }[self.personality]
+        situational = 0.0
+        if state.num_opponents == 1:
+            situational += 0.10
+        if state.position == Position.LATE:
+            situational += 0.08
+        if state.stage == GameStage.RIVER:
+            situational += 0.04
+        # Triangular noise clusters around sensible play but occasionally
+        # creates a noticeably more daring line.
+        noise = self._rng.triangular(-0.18, 0.34, 0.04)
+        return max(0.0, min(0.5 + personality_bias + situational + noise, 1.0))
+
+    def _bluff_signals(
+        self,
+        state: GameState,
+        draw: float,
+        weakness: float,
+        texture: BoardTexture,
+    ) -> BluffSignals:
+        blocker = self._blocker_strength(
+            state.hole_cards, state.community_cards
+        )
+        missed_draw = self._missed_draw_strength(
+            state.hole_cards, state.community_cards
+        )
+        scare_card = self._scare_card_strength(state.community_cards)
+        current_street_actions = [
+            event
+            for event in state.opponent_actions
+            if not event.street or event.street == state.stage.value
+        ]
+        if current_street_actions:
+            checks = sum(
+                event.action == ObservedAction.CHECK
+                for event in current_street_actions
+            )
+            calls = sum(
+                event.action == ObservedAction.CALL
+                for event in current_street_actions
+            )
+            aggression = sum(
+                event.action in {ObservedAction.BET, ObservedAction.RAISE}
+                for event in current_street_actions
+            )
+            action_weakness = max(
+                0.0,
+                (0.65 * checks + 0.30 * calls - 0.8 * aggression)
+                / len(current_street_actions),
+            )
+            weakness = max(weakness, action_weakness)
+        if state.position == Position.LATE:
+            weakness += 0.08
+        prior_aggression = any(
+            event.action in {ObservedAction.BET, ObservedAction.RAISE}
+            for event in state.hero_actions
+            if event.street != state.stage.value
+        )
+        raised_preflop = any(
+            event.action == ObservedAction.RAISE
+            and event.street == GameStage.PREFLOP.value
+            for event in state.hero_actions
+        )
+        checked_flop = any(
+            event.action == ObservedAction.CHECK
+            and event.street == GameStage.FLOP.value
+            for event in state.hero_actions
+        )
+        if state.stage == GameStage.FLOP and raised_preflop:
+            weakness += 0.12
+        if (
+            state.stage == GameStage.TURN
+            and checked_flop
+            and current_street_actions
+            and all(
+                event.action == ObservedAction.CHECK
+                for event in current_street_actions
+            )
+        ):
+            # Delayed continuation bets are credible after two checks.
+            weakness += 0.16
+        if prior_aggression and scare_card >= 0.25:
+            scare_card += 0.12
+        if texture.paired and state.num_opponents == 1:
+            scare_card = max(scare_card, 0.30)
+        return BluffSignals(
+            draw_equity=draw,
+            blocker_strength=blocker,
+            missed_draw=missed_draw,
+            scare_card=scare_card,
+            opponent_weakness=min(weakness, 1.0),
+        )
+
+    @staticmethod
+    def _blocker_strength(
+        hole_cards: Sequence[Card], community_cards: Sequence[Card]
+    ) -> float:
+        if len(community_cards) < 3:
+            return 0.0
+        score = 0.0
+        suit_counts = Counter(card.suit for card in community_cards)
+        dominant_suit, suit_count = max(
+            suit_counts.items(), key=lambda item: item[1]
+        )
+        suited_hole = [
+            card for card in hole_cards if card.suit == dominant_suit
+        ]
+        if suit_count >= 3 and suited_hole:
+            highest = max(card.rank_value for card in suited_hole)
+            if highest == 14:
+                score += 0.70 if suit_count >= 4 else 0.55
+            elif highest == 13:
+                score += 0.42
+            elif highest >= 11:
+                score += 0.22
+
+        board_ranks = {card.rank_value for card in community_cards}
+        if 14 in board_ranks:
+            board_ranks.add(1)
+        hole_ranks = {card.rank_value for card in hole_cards}
+        if 14 in hole_ranks:
+            hole_ranks.add(1)
+        for start in range(1, 11):
+            window = set(range(start, start + 5))
+            missing = window - board_ranks
+            if len(missing) == 1 and missing.intersection(hole_ranks):
+                score += 0.35 if start >= 6 else 0.22
+        return min(score, 1.0)
+
+    @staticmethod
+    def _missed_draw_strength(
+        hole_cards: Sequence[Card], community_cards: Sequence[Card]
+    ) -> float:
+        if len(community_cards) != 5:
+            return 0.0
+        turn_board = community_cards[:-1]
+        river = community_cards[-1]
+        turn_draw = draw_strength(hole_cards, turn_board)
+        if turn_draw < 0.18:
+            return 0.0
+
+        combined_turn = tuple(hole_cards) + tuple(turn_board)
+        suit_counts = Counter(card.suit for card in combined_turn)
+        flush_draw_suits = {
+            suit for suit, count in suit_counts.items() if count == 4
+        }
+        flush_missed = bool(flush_draw_suits) and river.suit not in flush_draw_suits
+
+        turn_ranks = {card.rank_value for card in combined_turn}
+        river_rank = river.rank_value
+        if 14 in turn_ranks:
+            turn_ranks.add(1)
+        straight_missed = False
+        for start in range(1, 11):
+            window = set(range(start, start + 5))
+            missing = window - turn_ranks
+            if len(missing) == 1 and river_rank not in missing:
+                straight_missed = True
+                break
+        return min(
+            1.0,
+            (0.58 if flush_missed else 0.0)
+            + (0.42 if straight_missed else 0.0),
+        )
+
+    @classmethod
+    def _scare_card_strength(cls, community_cards: Sequence[Card]) -> float:
+        if len(community_cards) < 4:
+            return 0.0
+        previous = community_cards[:-1]
+        latest = community_cards[-1]
+        score = 0.0
+        if latest.rank_value == 14:
+            score += 0.38
+        elif latest.rank_value == 13:
+            score += 0.24
+
+        previous_suits = Counter(card.suit for card in previous)
+        current_suits = Counter(card.suit for card in community_cards)
+        if previous_suits[latest.suit] == 2 and current_suits[latest.suit] == 3:
+            score += 0.36
+        if previous_suits[latest.suit] == 3 and current_suits[latest.suit] == 4:
+            score += 0.24
+
+        previous_straight = cls._straight_pressure(previous)
+        current_straight = cls._straight_pressure(community_cards)
+        if current_straight > previous_straight:
+            score += 0.30
+        if sum(card.rank_value == latest.rank_value for card in previous):
+            score += 0.16
+        return min(score, 1.0)
+
+    @staticmethod
+    def _straight_pressure(cards: Sequence[Card]) -> float:
+        ranks = {card.rank_value for card in cards}
+        if 14 in ranks:
+            ranks.add(1)
+        best = max(
+            (
+                len(ranks.intersection(range(start, start + 5)))
+                for start in range(1, 11)
+            ),
+            default=0,
+        )
+        return max(0.0, (best - 2) / 3)
+
     def _candidate_bets(
         self, state: GameState, texture: BoardTexture, very_strong: bool
     ) -> tuple[float, ...]:
@@ -521,36 +819,69 @@ class StrategyEngine:
             amounts.append(self._chips(max(amount, 1.0)))
         return tuple(dict.fromkeys(amounts))
 
+    def _bluff_size(
+        self,
+        state: GameState,
+        texture: BoardTexture,
+        signals: BluffSignals,
+        daring: float,
+    ) -> float:
+        polarized = (
+            state.stage == GameStage.RIVER
+            and (
+                signals.blocker_strength >= 0.35
+                or signals.scare_card >= 0.45
+            )
+        )
+        if polarized:
+            fraction = 0.76 + 0.34 * daring
+        elif signals.draw_equity >= 0.35:
+            fraction = 0.52 + 0.20 * texture.wetness
+        else:
+            fraction = 0.58 + 0.20 * daring
+        fraction *= self.settings.size_multiplier
+        if state.amount_to_call:
+            pot_after_call = state.pot_size + state.amount_to_call
+            amount = state.amount_to_call + max(
+                state.amount_to_call,
+                pot_after_call * fraction,
+            )
+        else:
+            amount = max(state.big_blind, state.pot_size * fraction)
+        if state.effective_stack is not None:
+            amount = min(amount, state.effective_stack)
+        return self._chips(max(amount, 1.0))
+
+    @staticmethod
+    def _protection_size(
+        state: GameState, texture: BoardTexture
+    ) -> float:
+        fraction = 0.38 + 0.18 * texture.wetness
+        amount = max(state.big_blind, state.pot_size * fraction)
+        if state.effective_stack is not None:
+            amount = min(amount, state.effective_stack)
+        return StrategyEngine._chips(max(amount, 1.0))
+
+    @staticmethod
+    def _stack_to_pot_ratio(state: GameState) -> float:
+        if state.effective_stack is None:
+            return 99.0
+        return state.effective_stack / max(state.pot_size, 1.0)
+
     @staticmethod
     def _call_ev(equity: float, pot: float, call: float) -> float:
         return equity * (pot + call) - call
 
     @staticmethod
-    def _response_adjusted_aggressive_ev(
+    def _aggressive_ev(
         equity: float,
         pot: float,
         investment: float,
         fold_probability: float,
         opponents: int,
-        texture: BoardTexture,
     ) -> float:
-        opponents = max(opponents, 1)
-        pot_fraction = investment / max(pot, 1.0)
-        size_pressure = 0.16 * min(pot_fraction, 1.5)
-        texture_resistance = 0.10 * texture.wetness
-        per_opponent_fold = max(
-            0.05,
-            min(
-                fold_probability + size_pressure - texture_resistance,
-                0.86,
-            ),
-        )
-        fold_all = per_opponent_fold ** opponents
-        expected_callers = opponents * (1.0 - per_opponent_fold)
-        called_pot = pot + investment + (expected_callers * investment)
-        # More callers reduce realization even when raw showdown equity is good.
-        realization = max(0.72, 1.0 - 0.055 * max(expected_callers - 1.0, 0.0))
-        called_ev = (equity * realization * called_pot) - investment
+        fold_all = fold_probability ** max(opponents, 1)
+        called_ev = equity * (pot + (2 * investment)) - investment
         return fold_all * pot + (1.0 - fold_all) * called_ev
 
     @staticmethod
@@ -581,11 +912,14 @@ class StrategyEngine:
             wetness -= 0.08
         high_cards = sum(card.rank_value >= 11 for card in community_cards)
         wetness += min(0.14, high_cards * 0.045)
+        straight_pressure = StrategyEngine._straight_pressure(community_cards)
         return BoardTexture(
             max(0.0, min(wetness, 1.0)),
             high_cards,
             paired,
             maximum_suit == len(community_cards),
+            min(maximum_suit / 4.0, 1.0),
+            straight_pressure,
         )
 
     @staticmethod
