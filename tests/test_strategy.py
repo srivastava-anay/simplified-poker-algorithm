@@ -212,7 +212,7 @@ def test_polarized_blocker_bluff_uses_a_large_size() -> None:
         BluffSignals(0.0, 0.7, 0.0, 0.2, 0.5),
         daring=0.8,
     )
-    assert amount >= 90
+    assert amount >= 75
 
 
 def test_blocker_bluffs_exist_but_are_not_automatic() -> None:

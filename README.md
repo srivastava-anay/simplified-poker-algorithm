@@ -170,6 +170,11 @@ boards, occasional dry-board slowplays, larger thin-value bets against players
 who fold too little, low stack-to-pot commitment logic, squeeze raises after
 limpers, and slightly wider late-position steals.
 
+Speculative aggression is globally tempered to roughly half strength. This
+reduces marginal raises, protection bets, bluff frequency, daring variance, and
+default bet sizes while preserving decisive value betting with premium hands.
+The aim is to create longer matches without making the bots passive.
+
 ## Graphical multiplayer table
 
 Launch the desktop UI:

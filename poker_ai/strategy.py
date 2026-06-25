@@ -62,6 +62,9 @@ PERSONALITIES = {
     Personality.TRICKY: PersonalitySettings(0.03, 0.02, 1.35, 0.96, 0.01),
 }
 
+# Keeps the richer strategy while reducing marginal aggression by roughly half.
+AGGRESSION_DIAL = 0.50
+
 
 EXPECTED_BOARD_CARDS = {
     GameStage.PREFLOP: 0,
@@ -248,7 +251,10 @@ class StrategyEngine:
                     score >= threshold + 0.07 - squeeze_bonus
                     and fold_equity >= 0.26
                     and self._rng.random()
-                    < 0.43 + self.settings.aggression + 0.16 * daring
+                    < (
+                        0.43 + self.settings.aggression + 0.16 * daring
+                    )
+                    * AGGRESSION_DIAL
                 ):
                     amount = self._raise_size(
                         state, 0.58 * self.settings.size_multiplier
@@ -286,7 +292,7 @@ class StrategyEngine:
                 and fold_equity >= 0.42
                 and score >= threshold - 0.05
             ):
-                strength += 0.08 * daring
+                strength += 0.08 * daring * AGGRESSION_DIAL
             amount = self._bet_size(
                 state, strength * self.settings.size_multiplier, preflop=True
             )
@@ -328,7 +334,7 @@ class StrategyEngine:
         value_threshold -= (
             self.settings.aggression * 0.12
             + 0.10 * calling_station
-            + 0.025 * daring
+            + 0.025 * daring * AGGRESSION_DIAL
         )
         strong = equity.equity >= value_threshold
         very_strong = equity.equity >= min(0.85, value_threshold + 0.18)
@@ -374,9 +380,12 @@ class StrategyEngine:
             bluff_cap,
             base_bluff_frequency
             * self.settings.bluff_multiplier
+            * AGGRESSION_DIAL
             / opponent_penalty,
         )
-        bluff_ev_hurdle = state.big_blind * (0.20 - 0.16 * daring)
+        bluff_ev_hurdle = state.big_blind * (
+            0.20 - 0.08 * daring * AGGRESSION_DIAL
+        )
         aggressive_bluff = (
             not strong
             and bluff_support
@@ -388,7 +397,16 @@ class StrategyEngine:
         )
 
         if state.amount_to_call:
-            if strong and best_raise_ev > call_ev + state.big_blind * 0.4:
+            value_raise = (
+                very_strong
+                or self._rng.random()
+                < (0.38 + 0.18 * daring) * AGGRESSION_DIAL
+            )
+            if (
+                strong
+                and value_raise
+                and best_raise_ev > call_ev + state.big_blind * 0.4
+            ):
                 return self._decision(
                     Action.RAISE, best_amount, equity, pot_odds, False,
                     "Value raise has higher estimated EV than calling.",
@@ -425,7 +443,7 @@ class StrategyEngine:
                 "Calling has materially negative estimated EV.",
             )
 
-        low_spr = self._stack_to_pot_ratio(state) <= 1.4
+        low_spr = self._stack_to_pot_ratio(state) <= 0.80
         slowplay = (
             very_strong
             and texture.wetness <= 0.24
@@ -455,7 +473,8 @@ class StrategyEngine:
             and medium_strength
             and texture.wetness >= 0.48
             and state.num_opponents <= 2
-            and self._rng.random() < 0.48 + 0.18 * daring
+            and self._rng.random()
+            < (0.48 + 0.18 * daring) * AGGRESSION_DIAL
         )
         if protection_bet:
             amount = self._protection_size(state, texture)
@@ -596,7 +615,8 @@ class StrategyEngine:
         # Triangular noise clusters around sensible play but occasionally
         # creates a noticeably more daring line.
         noise = self._rng.triangular(-0.18, 0.34, 0.04)
-        return max(0.0, min(0.5 + personality_bias + situational + noise, 1.0))
+        raw = max(0.0, min(0.5 + personality_bias + situational + noise, 1.0))
+        return 0.5 + (raw - 0.5) * AGGRESSION_DIAL
 
     def _bluff_signals(
         self,
@@ -795,13 +815,13 @@ class StrategyEngine:
         self, state: GameState, texture: BoardTexture, very_strong: bool
     ) -> tuple[float, ...]:
         if texture.wetness < 0.28:
-            fractions = (0.35, 0.55)
+            fractions = (0.30, 0.44)
         elif texture.wetness < 0.62:
-            fractions = (0.48, 0.70)
+            fractions = (0.40, 0.56)
         else:
-            fractions = (0.62, 0.88)
+            fractions = (0.50, 0.70)
         if very_strong:
-            fractions = (*fractions, 1.05)
+            fractions = (*fractions, 0.86)
 
         amounts = []
         for fraction in fractions:
@@ -834,11 +854,11 @@ class StrategyEngine:
             )
         )
         if polarized:
-            fraction = 0.76 + 0.34 * daring
+            fraction = 0.64 + 0.22 * daring
         elif signals.draw_equity >= 0.35:
-            fraction = 0.52 + 0.20 * texture.wetness
+            fraction = 0.44 + 0.14 * texture.wetness
         else:
-            fraction = 0.58 + 0.20 * daring
+            fraction = 0.48 + 0.12 * daring
         fraction *= self.settings.size_multiplier
         if state.amount_to_call:
             pot_after_call = state.pot_size + state.amount_to_call
@@ -856,7 +876,7 @@ class StrategyEngine:
     def _protection_size(
         state: GameState, texture: BoardTexture
     ) -> float:
-        fraction = 0.38 + 0.18 * texture.wetness
+        fraction = 0.32 + 0.13 * texture.wetness
         amount = max(state.big_blind, state.pot_size * fraction)
         if state.effective_stack is not None:
             amount = min(amount, state.effective_stack)
@@ -928,11 +948,11 @@ class StrategyEngine:
     ) -> float:
         if preflop:
             amount = max(
-                state.big_blind * (2.2 + 0.9 * strength),
-                state.pot_size * 0.55,
+                state.big_blind * (2.0 + 0.60 * strength),
+                state.pot_size * 0.45,
             )
         else:
-            amount = max(state.pot_size * min(max(strength, 0.35), 1.05), 1.0)
+            amount = max(state.pot_size * min(max(strength, 0.30), 0.86), 1.0)
         if state.effective_stack is not None:
             amount = min(amount, state.effective_stack)
         return StrategyEngine._chips(amount)
@@ -942,7 +962,7 @@ class StrategyEngine:
         pot_after_call = state.pot_size + state.amount_to_call
         increment = max(
             state.amount_to_call,
-            pot_after_call * min(max(strength, 0.45), 1.0),
+            pot_after_call * min(max(strength * 0.78, 0.36), 0.78),
         )
         amount = state.amount_to_call + increment
         if state.effective_stack is not None:
