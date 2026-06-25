@@ -175,6 +175,12 @@ reduces marginal raises, protection bets, bluff frequency, daring variance, and
 default bet sizes while preserving decisive value betting with premium hands.
 The aim is to create longer matches without making the bots passive.
 
+The Monte Carlo hot path is optimized for small computers: `treys` card values
+are cached, weighted opponent ranges use a small candidate pool instead of
+repeated rejection sampling, dealt cards are removed by index, and multiway
+pots receive smaller dynamic trial budgets. These changes reduce latency while
+retaining action-weighted opponent ranges.
+
 ## Graphical multiplayer table
 
 Launch the desktop UI:

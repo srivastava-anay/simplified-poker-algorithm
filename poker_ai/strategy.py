@@ -519,14 +519,25 @@ class StrategyEngine:
     def _simulation_budget(self, state: GameState) -> int:
         maximum = max(int(getattr(self.evaluator, "simulations", 1_000)), 1)
         street_factor = {
-            GameStage.PREFLOP: 0.28,
-            GameStage.FLOP: 1.0,
-            GameStage.TURN: 0.78,
-            GameStage.RIVER: 0.52,
+            GameStage.PREFLOP: 0.22,
+            GameStage.FLOP: 0.88,
+            GameStage.TURN: 0.68,
+            GameStage.RIVER: 0.44,
         }[state.stage]
-        opponent_factor = 1.0 / (1.0 + 0.10 * (state.num_opponents - 1))
-        pressure_factor = 1.12 if state.amount_to_call > state.pot_size * 0.4 else 1.0
-        return min(maximum, max(120, int(maximum * street_factor * opponent_factor * pressure_factor)))
+        opponent_factor = 1.0 / (1.0 + 0.16 * (state.num_opponents - 1))
+        pressure_factor = 1.10 if state.amount_to_call > state.pot_size * 0.4 else 1.0
+        return min(
+            maximum,
+            max(
+                100,
+                int(
+                    maximum
+                    * street_factor
+                    * opponent_factor
+                    * pressure_factor
+                ),
+            ),
+        )
 
     def _opponent_range_strengths(self, state: GameState) -> tuple[float, ...]:
         by_player: dict[str, list[OpponentAction]] = defaultdict(list)

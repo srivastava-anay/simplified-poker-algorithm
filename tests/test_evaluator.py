@@ -48,3 +48,12 @@ def test_equity_cache_returns_same_result_without_more_sampling() -> None:
     )
     assert first is second
     assert first.simulations == 120
+
+
+def test_weighted_sampler_returns_two_distinct_cards_and_positions() -> None:
+    evaluator = MonteCarloEvaluator(simulations=10, seed=4)
+    remaining = list(parse_cards(["As", "Kh", "Qd", "Jc", "Ts", "9h"]))
+    hand, positions = evaluator._sample_weighted_hand(remaining, 0.8)
+    assert len(set(hand)) == 2
+    assert len(set(positions)) == 2
+    assert hand == [remaining[position] for position in positions]

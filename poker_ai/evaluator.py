@@ -36,6 +36,9 @@ class MonteCarloEvaluator:
         self.simulations = simulations
         self._rng = random.Random(seed)
         self._evaluator = Evaluator()
+        self._treys_cards = {
+            card: TreysCard.new(str(card)) for card in full_deck()
+        }
         self._cache_size = max(cache_size, 0)
         self._cache: OrderedDict[tuple[object, ...], EquityResult] = OrderedDict()
 
@@ -84,20 +87,23 @@ class MonteCarloEvaluator:
         if cards_needed > len(unknown):
             raise ValueError("Not enough unknown cards for the requested opponents")
 
-        hero = [self._to_treys(card) for card in hole_cards]
+        hero = [self._treys_cards[card] for card in hole_cards]
         equity_total = 0.0
         outright_wins = 0
         ties = 0
+        weighted_ranges = any(strengths)
 
         for _ in range(trials):
-            if any(strengths):
+            if weighted_ranges:
                 remaining = unknown.copy()
                 opponent_hands = []
                 for strength in strengths:
-                    hand = self._sample_weighted_hand(remaining, strength)
+                    hand, positions = self._sample_weighted_hand(
+                        remaining, strength
+                    )
                     opponent_hands.append(hand)
-                    remaining.remove(hand[0])
-                    remaining.remove(hand[1])
+                    for position in sorted(positions, reverse=True):
+                        remaining.pop(position)
                 runout = self._rng.sample(remaining, 5 - len(community_cards))
             else:
                 dealt = self._rng.sample(unknown, cards_needed)
@@ -107,12 +113,12 @@ class MonteCarloEvaluator:
                 ]
                 runout = dealt[2 * num_opponents :]
             board_cards = list(community_cards) + runout
-            board = [self._to_treys(card) for card in board_cards]
+            board = [self._treys_cards[card] for card in board_cards]
 
             hero_score = self._evaluator.evaluate(board, hero)
             opponent_scores = [
                 self._evaluator.evaluate(
-                    board, [self._to_treys(card) for card in opponent]
+                    board, [self._treys_cards[card] for card in opponent]
                 )
                 for opponent in opponent_hands
             ]
@@ -142,26 +148,36 @@ class MonteCarloEvaluator:
 
     def _sample_weighted_hand(
         self, remaining: Sequence[Card], range_strength: float
-    ) -> list[Card]:
+    ) -> tuple[list[Card], tuple[int, int]]:
         if range_strength <= 0.02:
-            return self._rng.sample(remaining, 2)
-        exponent = 1.0 + (4.5 * range_strength)
-        best_hand: list[Card] | None = None
-        best_weight = -1.0
-        for _ in range(10):
-            hand = self._rng.sample(remaining, 2)
-            quality = starting_hand_strength(hand)
-            weight = (0.12 + quality) ** exponent
-            if weight > best_weight:
-                best_hand, best_weight = hand, weight
-            if self._rng.random() <= weight:
-                return hand
-        assert best_hand is not None
-        return best_hand
+            positions = self._random_distinct_positions(len(remaining))
+            return [remaining[position] for position in positions], positions
+        # A small candidate pool captures most of the useful range bias without
+        # the former ten rejection-sampling attempts per opponent.
+        candidate_count = 2 + int(range_strength * 2.0)
+        candidate_positions = [
+            self._random_distinct_positions(len(remaining))
+            for _ in range(candidate_count)
+        ]
+        candidates = [
+            [remaining[first], remaining[second]]
+            for first, second in candidate_positions
+        ]
+        if self._rng.random() < range_strength:
+            selected = max(
+                range(len(candidates)),
+                key=lambda index: starting_hand_strength(candidates[index]),
+            )
+        else:
+            selected = self._rng.randrange(len(candidates))
+        return candidates[selected], candidate_positions[selected]
 
-    @staticmethod
-    def _to_treys(card: Card) -> int:
-        return TreysCard.new(str(card))
+    def _random_distinct_positions(self, length: int) -> tuple[int, int]:
+        first = self._rng.randrange(length)
+        second = self._rng.randrange(length - 1)
+        if second >= first:
+            second += 1
+        return first, second
 
 
 def draw_strength(hole_cards: Sequence[Card], community_cards: Sequence[Card]) -> float:
