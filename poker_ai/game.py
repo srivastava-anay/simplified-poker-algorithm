@@ -360,15 +360,11 @@ class HeadsUpGame:
 
         if to_call:
             if decision.action == Action.FOLD:
-                self._output(
-                    f"Bot folds. [equity {decision.win_probability:.1%}]"
-                )
+                self._output("Bot folds.")
                 return ObservedAction.FOLD, 0
             if decision.action != Action.RAISE or max_total <= current_bet:
                 paid = self._pay("bot", min(to_call, bot.stack))
-                self._output(
-                    f"Bot calls {paid}. [equity {decision.win_probability:.1%}]"
-                )
+                self._output(f"Bot calls {paid}.")
                 return ObservedAction.CALL, paid
             minimum = current_bet + last_raise
             desired_total = bot.street_contribution + max(
@@ -377,16 +373,11 @@ class HeadsUpGame:
             target = min(max(desired_total, minimum), max_total)
             paid = self._pay("bot", target - bot.street_contribution)
             suffix = " (all-in)" if bot.stack == 0 else ""
-            self._output(
-                f"Bot raises to {target}{suffix}. "
-                f"[equity {decision.win_probability:.1%}]"
-            )
+            self._output(f"Bot raises to {target}{suffix}.")
             return ObservedAction.RAISE, paid
 
         if decision.action not in {Action.BET, Action.RAISE} or max_total == 0:
-            self._output(
-                f"Bot checks. [equity {decision.win_probability:.1%}]"
-            )
+            self._output("Bot checks.")
             return ObservedAction.CHECK, 0
 
         desired = max(int(round(decision.amount)), self.big_blind)
@@ -399,18 +390,13 @@ class HeadsUpGame:
             )
             paid = self._pay("bot", target - bot.street_contribution)
             suffix = " (all-in)" if bot.stack == 0 else ""
-            self._output(
-                f"Bot raises to {target}{suffix}. "
-                f"[equity {decision.win_probability:.1%}]"
-            )
+            self._output(f"Bot raises to {target}{suffix}.")
             return ObservedAction.RAISE, paid
 
         target = min(desired, max_total)
         paid = self._pay("bot", target - bot.street_contribution)
         suffix = " (all-in)" if bot.stack == 0 else ""
-        self._output(
-            f"Bot bets {target}{suffix}. [equity {decision.win_probability:.1%}]"
-        )
+        self._output(f"Bot bets {target}{suffix}.")
         return ObservedAction.BET, paid
 
     def _show_state(self, stage: GameStage, actor_id: str, to_call: int) -> None:

@@ -274,11 +274,6 @@ class MultiplayerTable:
             position=self._position_for(index),
         )
         decision = self.engines[player.player_id].decide(state)
-        self._event(
-            f"{player.name} estimates {decision.win_probability:.0%} equity.",
-            "analysis",
-        )
-
         if to_call:
             if decision.action == Action.FOLD:
                 self.act(index, "fold")
