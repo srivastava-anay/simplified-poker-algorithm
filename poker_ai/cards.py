@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 RANKS = "23456789TJQKA"
 SUITS = "shdc"
-SUIT_SYMBOLS = {"s": "♠", "h": "♥", "d": "♦", "c": "♣"}
 RANK_VALUE = {rank: value for value, rank in enumerate(RANKS, start=2)}
 
 
@@ -57,9 +56,3 @@ def ensure_unique(cards: tuple[Card, ...] | list[Card]) -> None:
 
 def full_deck() -> tuple[Card, ...]:
     return tuple(Card(rank, suit) for rank in RANKS for suit in SUITS)
-
-
-def format_cards(cards: tuple[Card, ...] | list[Card]) -> str:
-    """Format cards for players using standard suit symbols."""
-
-    return " ".join(f"{card.rank}{SUIT_SYMBOLS[card.suit]}" for card in cards)
