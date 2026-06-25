@@ -271,3 +271,149 @@ def test_delayed_continuation_bet_line_increases_bluff_support() -> None:
     baseline = engine._bluff_signals(without_history, 0.0, 0.0, texture)
     delayed = engine._bluff_signals(delayed_line, 0.0, 0.0, texture)
     assert delayed.opponent_weakness > baseline.opponent_weakness
+
+
+def test_top_pair_weak_kicker_has_more_domination_risk() -> None:
+    board = parse_cards(["As", "7h", "2c"])
+    engine = StrategyEngine(evaluator=FixedEvaluator(0.5), seed=1)
+    weak = engine._hand_features(parse_cards(["Ad", "3c"]), board)
+    strong = engine._hand_features(parse_cards(["Ah", "Kc"]), board)
+    assert weak.label == "pair"
+    assert weak.domination_risk > strong.domination_risk
+    assert weak.kicker_quality < strong.kicker_quality
+
+
+def test_overpair_is_classified_stronger_than_bottom_pair() -> None:
+    board = parse_cards(["9s", "7h", "2c"])
+    engine = StrategyEngine(evaluator=FixedEvaluator(0.5), seed=1)
+    overpair = engine._hand_features(parse_cards(["Jh", "Jc"]), board)
+    bottom_pair = engine._hand_features(parse_cards(["2d", "Ac"]), board)
+    assert overpair.made_strength > bottom_pair.made_strength
+    assert overpair.domination_risk < bottom_pair.domination_risk
+
+
+def test_bet_size_class_and_mdf_distinguish_small_from_overbet() -> None:
+    hole = parse_cards(["As", "Kd"])
+    board = parse_cards(["Qs", "7h", "2c"])
+    small = GameState(
+        (hole[0], hole[1]),
+        board,
+        125,
+        25,
+        (),
+        1,
+        GameStage.FLOP,
+        False,
+    )
+    overbet = GameState(
+        (hole[0], hole[1]),
+        board,
+        250,
+        150,
+        (),
+        1,
+        GameStage.FLOP,
+        False,
+    )
+    assert StrategyEngine._bet_size_class(small) == "small"
+    assert StrategyEngine._bet_size_class(overbet) == "overbet"
+    assert StrategyEngine._minimum_defense_frequency(small) > (
+        StrategyEngine._minimum_defense_frequency(overbet)
+    )
+
+
+def test_triple_barrel_line_has_more_pressure_than_single_bet() -> None:
+    hole = parse_cards(["As", "Kd"])
+    board = parse_cards(["Qs", "7h", "2c", "9d", "3s"])
+    common = dict(
+        hole_cards=(hole[0], hole[1]),
+        community_cards=board,
+        pot_size=200,
+        amount_to_call=60,
+        num_opponents=1,
+        stage=GameStage.RIVER,
+        can_check=False,
+    )
+    single = GameState(
+        **common,
+        opponent_actions=(OpponentAction("v", "bet", street="river"),),
+    )
+    triple = GameState(
+        **common,
+        opponent_actions=(
+            OpponentAction("v", "bet", street="flop"),
+            OpponentAction("v", "bet", street="turn"),
+            OpponentAction("v", "bet", street="river"),
+        ),
+    )
+    assert StrategyEngine._line_pressure(triple) > StrategyEngine._line_pressure(
+        single
+    )
+
+
+def test_mixed_roll_is_stable_for_identical_state() -> None:
+    engine = StrategyEngine(evaluator=FixedEvaluator(0.5), seed=42)
+    game_state = state(call=0, can_check=True)
+    assert engine._mixed_roll(game_state, "test") == engine._mixed_roll(
+        game_state, "test"
+    )
+
+
+def test_stack_depth_categories() -> None:
+    hole = parse_cards(["As", "Kd"])
+    board = parse_cards(["Qs", "7h", "2c"])
+    short = GameState(
+        (hole[0], hole[1]),
+        board,
+        100,
+        0,
+        (),
+        1,
+        GameStage.FLOP,
+        True,
+        effective_stack=150,
+        big_blind=10,
+    )
+    deep = GameState(
+        (hole[0], hole[1]),
+        board,
+        100,
+        0,
+        (),
+        1,
+        GameStage.FLOP,
+        True,
+        effective_stack=1200,
+        big_blind=10,
+    )
+    assert StrategyEngine._stack_depth_class(short) == "short"
+    assert StrategyEngine._stack_depth_class(deep) == "deep"
+
+
+def test_selective_check_raise_is_available() -> None:
+    hole = parse_cards(["As", "Ah"])
+    board = parse_cards(["Ad", "7h", "2c"])
+    game_state = GameState(
+        (hole[0], hole[1]),
+        board,
+        100,
+        30,
+        (OpponentAction("v", "bet", 30, street="flop"),),
+        1,
+        GameStage.FLOP,
+        False,
+        Position.MIDDLE,
+        ("v",),
+        500,
+        10,
+        (OpponentAction("hero", "check", street="flop"),),
+    )
+    decisions = [
+        StrategyEngine(
+            evaluator=FixedEvaluator(0.95),
+            seed=seed,
+            personality=Personality.TRICKY,
+        ).decide(game_state)
+        for seed in range(40)
+    ]
+    assert any("check-raise" in decision.rationale for decision in decisions)

@@ -170,6 +170,14 @@ boards, occasional dry-board slowplays, larger thin-value bets against players
 who fold too little, low stack-to-pot commitment logic, squeeze raises after
 limpers, and slightly wider late-position steals.
 
+The decision layer also classifies made hands and kicker quality, estimates nut
+strength and domination risk, interprets small bets through overbets, tracks
+opponents separately by street, recognizes check-raises and multi-street betting
+lines, and uses a minimum-defence-frequency approximation against small bets.
+Stack depth adjusts preflop ranges, multiway pots require stronger value, and
+stable state-based mixed-action rolls make checks, bets, and raises
+unpredictable without changing when the same saved situation is replayed.
+
 Speculative aggression is globally tempered to roughly half strength. This
 reduces marginal raises, protection bets, bluff frequency, daring variance, and
 default bet sizes while preserving decisive value betting with premium hands.

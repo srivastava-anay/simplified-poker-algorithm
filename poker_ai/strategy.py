@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Sequence
+
+from treys import Card as TreysCard
+from treys import Evaluator as TreysEvaluator
 
 from .cards import Card, ensure_unique
 from .evaluator import (
@@ -151,6 +155,16 @@ class BluffSignals:
         )
 
 
+@dataclass(frozen=True)
+class HandFeatures:
+    category: int
+    label: str
+    made_strength: float
+    kicker_quality: float
+    nut_strength: float
+    domination_risk: float
+
+
 class StrategyEngine:
     """Fast adaptive strategy designed for small Linux boards."""
 
@@ -164,17 +178,22 @@ class StrategyEngine:
         self.evaluator = evaluator or MonteCarloEvaluator(seed=seed)
         self.tracker = tracker or OpponentTracker()
         self._rng = random.Random(seed)
+        self._seed = seed if seed is not None else self._rng.randrange(1 << 30)
+        self._hand_evaluator = TreysEvaluator()
         self.personality = Personality(personality)
         self.settings = PERSONALITIES[self.personality]
 
     def decide(self, state: GameState) -> Decision:
-        aggression, weakness = self._behavior_signals(state.opponent_actions)
+        aggression, weakness = self._behavior_signals(
+            state.opponent_actions, state.stage
+        )
         range_strengths = self._opponent_range_strengths(state)
         simulations = self._simulation_budget(state)
         equity = self._estimate_equity(state, simulations, range_strengths)
         pot_odds = self._pot_odds(state.pot_size, state.amount_to_call)
         texture = self._board_texture(state.community_cards)
         draw = draw_strength(state.hole_cards, state.community_cards)
+        hand = self._hand_features(state.hole_cards, state.community_cards)
         fold_equity = self._fold_equity(state, aggression, weakness)
         daring = self._daring_factor(state)
         bluff_signals = self._bluff_signals(state, draw, weakness, texture)
@@ -190,6 +209,7 @@ class StrategyEngine:
             fold_equity,
             draw,
             texture,
+            hand,
             bluff_signals,
             daring,
             aggression,
@@ -224,6 +244,11 @@ class StrategyEngine:
         )
         if state.amount_to_call:
             threshold += 0.015 + (0.035 * price_pressure) + (0.025 if facing_raise else 0.0)
+        stack_class = self._stack_depth_class(state)
+        if stack_class == "short":
+            threshold += 0.035
+        elif stack_class == "deep" and state.position == Position.LATE:
+            threshold -= 0.025
 
         premium = score >= max(0.78, threshold + 0.15)
         playable = score >= threshold
@@ -250,7 +275,7 @@ class StrategyEngine:
                 if (
                     score >= threshold + 0.07 - squeeze_bonus
                     and fold_equity >= 0.26
-                    and self._rng.random()
+                    and self._mixed_roll(state, "preflop-reraise")
                     < (
                         0.43 + self.settings.aggression + 0.16 * daring
                     )
@@ -318,6 +343,7 @@ class StrategyEngine:
         fold_equity: float,
         draw: float,
         texture: BoardTexture,
+        hand: HandFeatures,
         bluff_signals: BluffSignals,
         daring: float,
         opponent_aggression: float,
@@ -331,13 +357,24 @@ class StrategyEngine:
             ),
         )
         calling_station = max(0.0, 0.38 - fold_equity)
+        multiway_penalty = 0.035 * max(state.num_opponents - 1, 0)
+        dominance_penalty = (
+            hand.domination_risk
+            * (0.07 + 0.025 * max(state.num_opponents - 1, 0))
+        )
         value_threshold -= (
             self.settings.aggression * 0.12
             + 0.10 * calling_station
             + 0.025 * daring * AGGRESSION_DIAL
         )
+        value_threshold += multiway_penalty + dominance_penalty
+        value_threshold -= 0.06 * hand.nut_strength
         strong = equity.equity >= value_threshold
-        very_strong = equity.equity >= min(0.85, value_threshold + 0.18)
+        very_strong = (
+            equity.equity >= min(0.85, value_threshold + 0.18)
+            or hand.made_strength >= 0.82
+            or hand.nut_strength >= 0.82
+        )
         medium_strength = equity.equity >= max(
             pot_odds + 0.05,
             value_threshold - 0.16,
@@ -390,16 +427,56 @@ class StrategyEngine:
             not strong
             and bluff_support
             and best_raise_ev > max(0.0, call_ev) + bluff_ev_hurdle
-            and self._rng.random() < bluff_frequency
+            and self._mixed_roll(state, "bluff") < bluff_frequency
         )
         bluff_amount = self._bluff_size(
             state, texture, bluff_signals, daring
         )
+        bet_class = self._bet_size_class(state)
+        line_pressure = self._line_pressure(state)
 
         if state.amount_to_call:
+            checked_this_street = any(
+                action.action == ObservedAction.CHECK
+                and action.street == state.stage.value
+                for action in state.hero_actions
+            )
+            check_raise_candidate = (
+                checked_this_street
+                and state.num_opponents <= 2
+                and (
+                    very_strong
+                    or (draw >= 0.52 and hand.domination_risk < 0.45)
+                )
+            )
+            check_raise_chance = (
+                0.34
+                + 0.20 * hand.nut_strength
+                + 0.12 * daring
+                + 0.08 * opponent_aggression
+            ) * AGGRESSION_DIAL
+            if (
+                check_raise_candidate
+                and self._mixed_roll(state, "check-raise") < check_raise_chance
+            ):
+                amount = max(
+                    best_amount,
+                    self._raise_size(
+                        state,
+                        0.56 + 0.18 * hand.nut_strength,
+                    ),
+                )
+                return self._decision(
+                    Action.RAISE,
+                    amount,
+                    equity,
+                    pot_odds,
+                    not strong,
+                    "A protected checking range enables a selective check-raise.",
+                )
             value_raise = (
                 very_strong
-                or self._rng.random()
+                or self._mixed_roll(state, "value-raise")
                 < (0.38 + 0.18 * daring) * AGGRESSION_DIAL
             )
             if (
@@ -429,11 +506,39 @@ class StrategyEngine:
                 + max(self.settings.risk_tolerance, 0.0)
             )
             required_equity = max(0.0, pot_odds - defense_margin)
+            minimum_defense = self._minimum_defense_frequency(state)
+            mdf_equity_floor = max(
+                0.0,
+                pot_odds
+                - 0.06 * minimum_defense
+                - 0.035 * hand.kicker_quality,
+            )
+            if bet_class == "small":
+                required_equity = min(required_equity, mdf_equity_floor)
+            elif bet_class == "overbet":
+                required_equity += (
+                    0.025
+                    + 0.045 * hand.domination_risk
+                    + 0.025 * line_pressure
+                )
+            if state.stage == GameStage.RIVER:
+                required_equity += 0.035 * line_pressure
             tolerance = max(
                 state.big_blind * (0.65 + self.settings.risk_tolerance),
                 state.pot_size * (0.025 + 0.035 * draw),
             )
-            if equity.equity >= required_equity or call_ev >= -tolerance:
+            weak_dominated_pair = (
+                hand.category == 8
+                and hand.domination_risk >= 0.62
+                and bet_class in {"pot", "overbet"}
+            )
+            if (
+                not weak_dominated_pair
+                and (
+                    equity.equity >= required_equity
+                    or call_ev >= -tolerance
+                )
+            ):
                 return self._decision(
                     Action.CALL, state.amount_to_call, equity, pot_odds, False,
                     "Equity, price, or draw potential supports defending.",
@@ -449,7 +554,7 @@ class StrategyEngine:
             and texture.wetness <= 0.24
             and not low_spr
             and self.personality in {Personality.BALANCED, Personality.TRICKY}
-            and self._rng.random() < 0.08 + 0.12 * daring
+            and self._mixed_roll(state, "slowplay") < 0.08 + 0.12 * daring
         )
         if slowplay:
             return self._decision(
@@ -473,7 +578,7 @@ class StrategyEngine:
             and medium_strength
             and texture.wetness >= 0.48
             and state.num_opponents <= 2
-            and self._rng.random()
+            and self._mixed_roll(state, "protection")
             < (0.48 + 0.18 * daring) * AGGRESSION_DIAL
         )
         if protection_bet:
@@ -551,7 +656,10 @@ class StrategyEngine:
         for player_id in player_ids[: state.num_opponents]:
             profile = self.tracker.profile(player_id)
             strength = 0.08 + 0.24 * (1.0 - profile.voluntary_action_rate)
-            for event in by_player.get(player_id, ()):
+            events = by_player.get(player_id, ())
+            aggressive_streets: set[str] = set()
+            checked_streets: set[str] = set()
+            for event in events:
                 action_signal = {
                     ObservedAction.FOLD: -0.10,
                     ObservedAction.CHECK: -0.04,
@@ -561,11 +669,29 @@ class StrategyEngine:
                 }[event.action]
                 if event.action in {ObservedAction.BET, ObservedAction.RAISE}:
                     action_signal *= 1.0 - (0.45 * profile.aggression)
+                    if event.street:
+                        action_signal += 0.10 * profile.street_aggression(
+                            event.street
+                        )
+                        aggressive_streets.add(event.street)
+                    if (
+                        event.action == ObservedAction.RAISE
+                        and event.street in checked_streets
+                    ):
+                        action_signal += 0.18
+                elif event.action == ObservedAction.CHECK and event.street:
+                    checked_streets.add(event.street)
                 strength += action_signal
                 if event.pot_before_action:
-                    strength += 0.10 * min(
-                        event.amount / event.pot_before_action, 1.5
-                    )
+                    fraction = event.amount / event.pot_before_action
+                    strength += {
+                        "small": 0.02,
+                        "medium": 0.07,
+                        "pot": 0.13,
+                        "overbet": 0.20,
+                    }[self._size_class_from_fraction(fraction)]
+            if len(aggressive_streets) >= 2:
+                strength += 0.09 * (len(aggressive_streets) - 1)
             strengths.append(max(0.0, min(strength, 0.95)))
 
         observed_average = (
@@ -580,16 +706,26 @@ class StrategyEngine:
     ) -> float:
         facing_raise = state.amount_to_call > 0
         ids = state.active_opponent_ids or None
-        historic = self.tracker.estimated_fold_probability(ids, facing_raise)
+        historic = self.tracker.estimated_fold_probability(
+            ids,
+            facing_raise,
+            street=state.stage.value,
+        )
         estimate = historic + 0.20 * weakness - 0.14 * aggression
         estimate += 0.05 if state.position == Position.LATE else 0.0
         estimate -= 0.04 * (state.num_opponents - 1)
         return max(0.08, min(estimate, 0.72))
 
     def _behavior_signals(
-        self, current_actions: Sequence[OpponentAction]
+        self,
+        current_actions: Sequence[OpponentAction],
+        stage: GameStage | None = None,
     ) -> tuple[float, float]:
-        historic_aggression = self.tracker.table_aggression()
+        historic_aggression = (
+            self.tracker.table_street_aggression(stage.value)
+            if stage is not None
+            else self.tracker.table_aggression()
+        )
         historic_weakness = self.tracker.table_weakness()
         if not current_actions:
             return historic_aggression, historic_weakness
@@ -623,9 +759,10 @@ class StrategyEngine:
             situational += 0.08
         if state.stage == GameStage.RIVER:
             situational += 0.04
-        # Triangular noise clusters around sensible play but occasionally
-        # creates a noticeably more daring line.
-        noise = self._rng.triangular(-0.18, 0.34, 0.04)
+        roll = self._mixed_roll(state, "daring")
+        # Stable, center-weighted noise keeps identical spots reproducible.
+        centered = (roll - 0.5) * 2.0
+        noise = (abs(centered) ** 1.6) * (0.28 if centered > 0 else -0.16)
         raw = max(0.0, min(0.5 + personality_bias + situational + noise, 1.0))
         return 0.5 + (raw - 0.5) * AGGRESSION_DIAL
 
@@ -821,6 +958,244 @@ class StrategyEngine:
             default=0,
         )
         return max(0.0, (best - 2) / 3)
+
+    def _hand_features(
+        self,
+        hole_cards: Sequence[Card],
+        community_cards: Sequence[Card],
+    ) -> HandFeatures:
+        if len(community_cards) < 3:
+            high = max(card.rank_value for card in hole_cards)
+            return HandFeatures(
+                9,
+                "preflop",
+                starting_hand_strength(hole_cards) * 0.35,
+                high / 14.0,
+                0.0,
+                0.0,
+            )
+
+        board = [TreysCard.new(str(card)) for card in community_cards]
+        hand = [TreysCard.new(str(card)) for card in hole_cards]
+        score = self._hand_evaluator.evaluate(board, hand)
+        category = self._hand_evaluator.get_rank_class(score)
+        label = self._hand_evaluator.class_to_string(category).lower()
+        made_strength = {
+            1: 1.0,
+            2: 0.98,
+            3: 0.93,
+            4: 0.84,
+            5: 0.78,
+            6: 0.72,
+            7: 0.62,
+            8: 0.38,
+            9: 0.08,
+        }[category]
+
+        board_ranks = Counter(card.rank_value for card in community_cards)
+        hole_ranks = [card.rank_value for card in hole_cards]
+        board_high = max(board_ranks)
+        kicker_quality = max(hole_ranks) / 14.0
+        nut_strength = 0.0
+        domination_risk = 0.0
+
+        if category <= 3:
+            nut_strength = 0.92
+        elif category == 4:
+            suit_counts = Counter(
+                card.suit for card in tuple(hole_cards) + tuple(community_cards)
+            )
+            flush_suit = max(suit_counts, key=suit_counts.get)
+            suited_hole = sorted(
+                (
+                    card.rank_value
+                    for card in hole_cards
+                    if card.suit == flush_suit
+                ),
+                reverse=True,
+            )
+            flush_high = suited_hole[0] if suited_hole else 0
+            nut_strength = {
+                14: 1.0,
+                13: 0.82,
+                12: 0.66,
+                11: 0.54,
+            }.get(flush_high, 0.38)
+            domination_risk = max(0.0, 0.72 - nut_strength * 0.55)
+        elif category == 5:
+            nut_strength = 0.72
+            domination_risk = 0.18
+        elif category == 6:
+            nut_strength = 0.68
+        elif category == 7:
+            nut_strength = 0.50
+            domination_risk = 0.16
+        elif category == 8:
+            pair_rank = 0
+            if hole_ranks[0] == hole_ranks[1]:
+                pair_rank = hole_ranks[0]
+                if pair_rank > board_high:
+                    made_strength = 0.57
+                    kicker_quality = 0.86
+                    domination_risk = 0.12
+                else:
+                    domination_risk = 0.58
+            else:
+                matching = [
+                    rank for rank in hole_ranks if board_ranks.get(rank, 0)
+                ]
+                pair_rank = max(matching, default=0)
+                kicker = max(
+                    (rank for rank in hole_ranks if rank != pair_rank),
+                    default=max(hole_ranks),
+                )
+                kicker_quality = kicker / 14.0
+                unique_board = sorted(board_ranks, reverse=True)
+                if pair_rank == unique_board[0]:
+                    made_strength = 0.48
+                    domination_risk = max(
+                        0.08, 0.72 - 0.52 * kicker_quality
+                    )
+                elif pair_rank:
+                    made_strength = 0.32
+                    domination_risk = 0.68
+            if max(hole_ranks) == 14 and min(hole_ranks) <= 8:
+                domination_risk = max(domination_risk, 0.62)
+        else:
+            if max(hole_ranks) == 14 and min(hole_ranks) <= 8:
+                domination_risk = 0.34
+
+        return HandFeatures(
+            category,
+            label,
+            made_strength,
+            kicker_quality,
+            min(nut_strength, 1.0),
+            min(domination_risk, 1.0),
+        )
+
+    @staticmethod
+    def _size_class_from_fraction(fraction: float) -> str:
+        if fraction < 0.38:
+            return "small"
+        if fraction < 0.78:
+            return "medium"
+        if fraction <= 1.18:
+            return "pot"
+        return "overbet"
+
+    @classmethod
+    def _bet_size_class(cls, state: GameState) -> str:
+        if state.amount_to_call <= 0:
+            return "none"
+        pot_before_bet = max(
+            state.pot_size - state.amount_to_call,
+            state.big_blind,
+        )
+        return cls._size_class_from_fraction(
+            state.amount_to_call / pot_before_bet
+        )
+
+    @staticmethod
+    def _minimum_defense_frequency(state: GameState) -> float:
+        if state.amount_to_call <= 0:
+            return 1.0
+        pot_before_bet = max(
+            state.pot_size - state.amount_to_call,
+            state.big_blind,
+        )
+        return pot_before_bet / (pot_before_bet + state.amount_to_call)
+
+    @staticmethod
+    def _stack_depth_class(state: GameState) -> str:
+        if state.effective_stack is None:
+            return "medium"
+        blinds = state.effective_stack / state.big_blind
+        if blinds < 22:
+            return "short"
+        if blinds > 90:
+            return "deep"
+        return "medium"
+
+    @staticmethod
+    def _line_pressure(state: GameState) -> float:
+        by_player: dict[str, list[OpponentAction]] = defaultdict(list)
+        for action in state.opponent_actions:
+            by_player[action.player_id].append(action)
+        pressure = 0.0
+        for actions in by_player.values():
+            street_actions: dict[str, list[ObservedAction]] = defaultdict(list)
+            for action in actions:
+                if action.street:
+                    street_actions[action.street].append(action.action)
+            aggressive_streets = {
+                action.street
+                for action in actions
+                if action.action in {ObservedAction.BET, ObservedAction.RAISE}
+                and action.street
+            }
+            raises = sum(
+                action.action == ObservedAction.RAISE for action in actions
+            )
+            checks = {
+                action.street
+                for action in actions
+                if action.action == ObservedAction.CHECK
+            }
+            check_raises = sum(
+                action.action == ObservedAction.RAISE
+                and action.street in checks
+                for action in actions
+            )
+            triple_barrel = all(
+                any(
+                    action in {ObservedAction.BET, ObservedAction.RAISE}
+                    for action in street_actions.get(street, ())
+                )
+                for street in ("flop", "turn", "river")
+            )
+            bet_check_bet = (
+                any(
+                    action in {ObservedAction.BET, ObservedAction.RAISE}
+                    for action in street_actions.get("flop", ())
+                )
+                and ObservedAction.CHECK in street_actions.get("turn", ())
+                and any(
+                    action in {ObservedAction.BET, ObservedAction.RAISE}
+                    for action in street_actions.get("river", ())
+                )
+            )
+            pressure = max(
+                pressure,
+                0.22 * max(len(aggressive_streets) - 1, 0)
+                + 0.16 * raises
+                + 0.28 * check_raises,
+                0.78 if triple_barrel else 0.0,
+                0.42 if bet_check_bet else 0.0,
+            )
+        return min(pressure, 1.0)
+
+    def _mixed_roll(self, state: GameState, label: str) -> float:
+        action_text = ",".join(
+            f"{action.player_id}:{action.street}:{action.action.value}:{action.amount:.2f}"
+            for action in (*state.opponent_actions, *state.hero_actions)
+        )
+        payload = "|".join(
+            (
+                str(self._seed),
+                self.personality.value,
+                label,
+                ",".join(sorted(str(card) for card in state.hole_cards)),
+                ",".join(str(card) for card in state.community_cards),
+                state.stage.value,
+                f"{state.pot_size:.2f}",
+                f"{state.amount_to_call:.2f}",
+                str(state.num_opponents),
+                action_text,
+            )
+        )
+        digest = hashlib.blake2s(payload.encode(), digest_size=8).digest()
+        return int.from_bytes(digest, "big") / ((1 << 64) - 1)
 
     def _candidate_bets(
         self, state: GameState, texture: BoardTexture, very_strong: bool

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable
 
@@ -46,6 +46,11 @@ class OpponentProfile:
     folded_to_bets: int = 0
     faced_raises: int = 0
     folded_to_raises: int = 0
+    street_actions: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
+    street_faced_bets: Counter[str] = field(default_factory=Counter)
+    street_folds_to_bets: Counter[str] = field(default_factory=Counter)
 
     @property
     def actions_seen(self) -> int:
@@ -83,6 +88,17 @@ class OpponentProfile:
         count = self.bets + self.raises
         return self.aggressive_chips / count if count else 0.0
 
+    def street_aggression(self, street: str) -> float:
+        actions = self.street_actions.get(street, Counter())
+        aggressive = actions["bet"] + (1.5 * actions["raise"])
+        passive = actions["check"] + actions["call"] + aggressive
+        return aggressive / passive if passive else self.aggression
+
+    def street_fold_to_bet(self, street: str) -> float:
+        faced = self.street_faced_bets[street]
+        folded = self.street_folds_to_bets[street]
+        return (folded + 1.5) / (faced + 4.0)
+
 
 class OpponentTracker:
     """Accumulate lightweight tendencies without requiring a database."""
@@ -94,12 +110,18 @@ class OpponentTracker:
         profile = self._profiles[event.player_id]
         field = f"{event.action.value}s"
         setattr(profile, field, getattr(profile, field) + 1)
+        if event.street:
+            profile.street_actions[event.street][event.action.value] += 1
         if event.action in {ObservedAction.BET, ObservedAction.RAISE}:
             profile.aggressive_chips += event.amount
         if event.faced_bet:
             profile.faced_bets += 1
+            if event.street:
+                profile.street_faced_bets[event.street] += 1
             if event.action == ObservedAction.FOLD:
                 profile.folded_to_bets += 1
+                if event.street:
+                    profile.street_folds_to_bets[event.street] += 1
         if event.faced_raise:
             profile.faced_raises += 1
             if event.action == ObservedAction.FOLD:
@@ -127,15 +149,32 @@ class OpponentTracker:
         self,
         active_player_ids: Iterable[str] | None = None,
         facing_raise: bool = False,
+        street: str = "",
     ) -> float:
         profiles = self._selected_profiles(active_player_ids)
         if not profiles:
             return 0.36 if facing_raise else 0.32
-        values = [
-            profile.fold_to_raise if facing_raise else profile.fold_to_bet
-            for profile in profiles
-        ]
+        values = []
+        for profile in profiles:
+            if street and not facing_raise:
+                values.append(profile.street_fold_to_bet(street))
+            else:
+                values.append(
+                    profile.fold_to_raise if facing_raise else profile.fold_to_bet
+                )
         return sum(values) / len(values)
+
+    def table_street_aggression(
+        self,
+        street: str,
+        active_player_ids: Iterable[str] | None = None,
+    ) -> float:
+        profiles = self._selected_profiles(active_player_ids)
+        if not profiles:
+            return 0.0
+        return sum(
+            profile.street_aggression(street) for profile in profiles
+        ) / len(profiles)
 
     def _selected_profiles(
         self, active_player_ids: Iterable[str] | None
