@@ -30,6 +30,8 @@ BLUE = (79, 159, 216)
 GOLD = (241, 199, 91)
 INK = (237, 242, 232)
 MUTED = (145, 160, 163)
+NUMPY = None
+NUMPY_IMPORT_ATTEMPTED = False
 
 
 def import_hardware() -> tuple[object, object, object, object]:
@@ -130,6 +132,25 @@ def draw_screen(
 
 
 def rgb888_to_rgb565(image: object) -> bytes:
+    global NUMPY, NUMPY_IMPORT_ATTEMPTED
+    if not NUMPY_IMPORT_ATTEMPTED:
+        NUMPY_IMPORT_ATTEMPTED = True
+        try:
+            import numpy
+        except ImportError:
+            NUMPY = None
+            print("NumPy not installed; using slow Python RGB565 conversion.")
+            print("Install it with: python -m pip install numpy")
+        else:
+            NUMPY = numpy
+    if NUMPY is not None:
+        array = NUMPY.asarray(image.convert("RGB"), dtype=NUMPY.uint16)
+        red = array[:, :, 0]
+        green = array[:, :, 1]
+        blue = array[:, :, 2]
+        rgb565 = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
+        return rgb565.byteswap().tobytes()
+
     data = image.convert("RGB").tobytes()
     output = bytearray(len(data) // 3 * 2)
     out_index = 0
