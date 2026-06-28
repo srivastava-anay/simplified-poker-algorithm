@@ -45,8 +45,7 @@ DISABLED = "#364044"
 CARD_FACE = "#f7f2df"
 CARD_EDGE = "#d7c9a0"
 BLACK_CARD = "#25292c"
-# The ILI9341 path renders this with red/blue swapped, landing near #a90505.
-RED_CARD = "#0505a9"
+RED_CARD = "#a90505"
 SUIT_SYMBOLS = {
     "s": "\u2660",
     "h": "\u2665",
@@ -1045,7 +1044,7 @@ class PiHandheldPokerApp(HandheldPokerCore):
         self._scheduled_jobs.pop(job, None)
 
     def _clear(self) -> None:
-        self.image = self.Image.new("RGB", (WIDTH, HEIGHT), BG)
+        self.image = self.Image.new("RGB", (WIDTH, HEIGHT), self._color(BG))
         self.draw = self.ImageDraw.Draw(self.image)
 
     def _rect(
@@ -1107,7 +1106,7 @@ class PiHandheldPokerApp(HandheldPokerCore):
                 (int(left), int(top + index * line_height)),
                 line,
                 font=loaded_font,
-                fill=self._color(fill) or INK,
+                fill=self._color(fill) or self._color(INK),
             )
 
     def _present(self) -> None:
@@ -1122,7 +1121,11 @@ class PiHandheldPokerApp(HandheldPokerCore):
 
     @staticmethod
     def _color(color: str | None) -> str | None:
-        return None if color in {None, ""} else color
+        if color in {None, ""}:
+            return None
+        if len(color) == 7 and color.startswith("#"):
+            return f"#{color[5:7]}{color[3:5]}{color[1:3]}"
+        return color
 
     def _font(self, font_spec: object) -> object:
         size = 12
