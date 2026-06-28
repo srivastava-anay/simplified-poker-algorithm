@@ -123,7 +123,39 @@ def draw_screen(
         draw.text((x0 + 10, y0 + 12), label.split()[0], font=fonts["large"], fill=text_fill)
         draw.text((x0 + 10, y0 + 44), state, font=fonts["body"], fill=text_fill)
 
-    display.image(image)
+    send_image(display, image, image_module)
+
+
+def send_image(display: object, image: object, image_module: object) -> None:
+    transform = getattr(display, "_poker_test_transform", None)
+    if transform == "rotate_90":
+        display.image(image.transpose(image_module.Transpose.ROTATE_90))
+        return
+    if transform == "rotate_270":
+        display.image(image.transpose(image_module.Transpose.ROTATE_270))
+        return
+
+    try:
+        display.image(image)
+        setattr(display, "_poker_test_transform", "none")
+        return
+    except ValueError as original_error:
+        for name, transpose in (
+            ("rotate_90", image_module.Transpose.ROTATE_90),
+            ("rotate_270", image_module.Transpose.ROTATE_270),
+        ):
+            rotated = image.transpose(transpose)
+            try:
+                display.image(rotated)
+                setattr(display, "_poker_test_transform", name)
+                print(
+                    f"Display accepted {name}: frame {image.size} -> {rotated.size}"
+                )
+                return
+            except ValueError:
+                pass
+        print(f"Display rejected frame size: {image.size}")
+        raise original_error
 
 
 def main() -> int:
