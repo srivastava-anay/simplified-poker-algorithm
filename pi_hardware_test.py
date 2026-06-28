@@ -125,8 +125,31 @@ def draw_screen(
         draw.text((x0 + 10, y0 + 44), state, font=fonts["body"], fill=text_fill)
 
     start = time.monotonic()
-    send_image(display, image, image_module)
+    send_image_fast(display, image)
     return time.monotonic() - start
+
+
+def rgb888_to_rgb565(image: object) -> bytes:
+    data = image.convert("RGB").tobytes()
+    output = bytearray(len(data) // 3 * 2)
+    out_index = 0
+    for index in range(0, len(data), 3):
+        red = data[index]
+        green = data[index + 1]
+        blue = data[index + 2]
+        value = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
+        output[out_index] = value >> 8
+        output[out_index + 1] = value & 0xFF
+        out_index += 2
+    return bytes(output)
+
+
+def send_image_fast(display: object, image: object) -> None:
+    block = getattr(display, "_block", None)
+    if block is None:
+        raise RuntimeError("Display driver does not expose _block for fast transfer")
+    width, height = image.size
+    block(0, 0, width - 1, height - 1, rgb888_to_rgb565(image))
 
 
 def send_image(display: object, image: object, image_module: object) -> None:
@@ -179,7 +202,16 @@ def benchmark_display(display: object, image_module: object) -> None:
         print("display._block is unavailable; cannot raw-transfer benchmark.")
         return
 
-    raw = (b"\x07\xe0" * (width * height))
+    start = time.monotonic()
+    raw = rgb888_to_rgb565(image)
+    convert_elapsed = time.monotonic() - start
+    start = time.monotonic()
+    block(0, 0, width - 1, height - 1, raw)
+    fast_elapsed = time.monotonic() - start
+    print(f"custom RGB565 conversion: {convert_elapsed:.3f}s")
+    print(f"custom RGB565 _block transfer: {fast_elapsed:.3f}s")
+
+    raw = b"\x07\xe0" * (width * height)
     start = time.monotonic()
     try:
         block(0, 0, width - 1, height - 1, raw)
