@@ -178,6 +178,7 @@ def main() -> int:
         print(f"  {label}: GPIO{pin}")
     tick = 0
     last_states: dict[str, bool] | None = None
+    last_raw_print = 0.0
     try:
         while True:
             states = {label: not button.value for label, button in buttons.items()}
@@ -188,6 +189,14 @@ def main() -> int:
                 ]
                 print(f"Buttons: {', '.join(parts)}", flush=True)
                 last_states = states.copy()
+            now = time.monotonic()
+            if now - last_raw_print >= 1.0:
+                raw_parts = [
+                    f"GPIO{BUTTONS[label]}={'LOW' if not button.value else 'HIGH'}"
+                    for label, button in buttons.items()
+                ]
+                print(f"Raw pins: {', '.join(raw_parts)}", flush=True)
+                last_raw_print = now
             draw_screen(display, Image, ImageDraw, fonts, states, tick)
             tick += 1
             time.sleep(0.08)
