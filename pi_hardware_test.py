@@ -39,8 +39,10 @@ def import_hardware() -> tuple[object, object, object, object, object]:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError as exc:
         print("Missing Pi display/button dependencies.")
+        print(f"Python executable: {sys.executable}")
+        print(f"Import error: {exc!r}")
         print("Install them on the Pi with:")
-        print("  python3 -m pip install adafruit-circuitpython-rgb-display gpiozero pillow")
+        print("  python -m pip install adafruit-circuitpython-rgb-display gpiozero pillow")
         raise SystemExit(1) from exc
     return board, digitalio, ili9341, Button, (Image, ImageDraw, ImageFont)
 
