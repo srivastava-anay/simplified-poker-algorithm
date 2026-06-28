@@ -267,7 +267,7 @@ Tkinter. It uses the same wiring as `pi_hardware_test.py`: ILI9341 SPI0 on
 and active-low buttons on `GPIO5`, `GPIO6`, and `GPIO13`.
 
 The screen is fixed at 320x240 pixels to match a landscape ILI9341 display. It
-first asks how many bots you want to play against, from one to seven.
+first asks how many bots you want to play against, from one to six.
 
 On the setup screen:
 

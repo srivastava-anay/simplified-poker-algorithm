@@ -14,12 +14,15 @@ from .table import MultiplayerTable, TableEvent
 WIDTH = 320
 HEIGHT = 240
 ROTATION = 90
-BUTTON_H = 40
 GUTTER = 6
-LOG_W = 84
+LOG_W = 98
 LOG_X = WIDTH - LOG_W - GUTTER
 PLAY_X = GUTTER
 PLAY_W = LOG_X - PLAY_X - GUTTER
+MAX_BOTS = 6
+TABLE_TOP = 30
+TABLE_BOTTOM = 172
+HERO_TOP = 176
 DEBOUNCE_SECONDS = 0.035
 
 BUTTON_PINS = {
@@ -256,7 +259,7 @@ class HandheldPokerCore:
                 self.bot_count = max(1, self.bot_count - 1)
                 self._refresh()
             elif key == "L":
-                self.bot_count = min(7, self.bot_count + 1)
+                self.bot_count = min(MAX_BOTS, self.bot_count + 1)
                 self._refresh()
             elif key == "K":
                 self._start_hand()
@@ -392,7 +395,6 @@ class HandheldPokerCore:
             self._set_setup_buttons()
             self._clear()
             self._draw_setup()
-            self._draw_buttons()
             self._present()
             return
         if self.table is None:
@@ -406,7 +408,6 @@ class HandheldPokerCore:
         self._draw_board()
         self._draw_hero(status)
         self._draw_log()
-        self._draw_buttons()
         self._present()
 
     def _pull_events(self) -> None:
@@ -485,13 +486,13 @@ class HandheldPokerCore:
         self.soft_buttons = [
             SoftButton("J", "- Bots", self.bot_count > 1),
             SoftButton("K", "Start", True),
-            SoftButton("L", "+ Bots", self.bot_count < 7),
+            SoftButton("L", "+ Bots", self.bot_count < MAX_BOTS),
         ]
 
     def _draw_setup(self) -> None:
         self._rect(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
         self._rect(
-            10, 18, WIDTH - 10, HEIGHT - BUTTON_H - 12, fill=PANEL, outline="#2d3b40"
+            10, 18, WIDTH - 10, HEIGHT - 10, fill=PANEL, outline="#2d3b40"
         )
         self._text(
             72,
@@ -531,18 +532,25 @@ class HandheldPokerCore:
             fill=INK,
             font=("Menlo", 10),
         )
+        self._text(
+            WIDTH // 2,
+            204,
+            text="Left  Start  Right",
+            fill=MUTED,
+            font=("Menlo", 9, "bold"),
+        )
 
     def _draw_background(self) -> None:
         assert self.table is not None
         self._rect(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
         self._rect(
-            PLAY_X, 30, PLAY_X + PLAY_W, 158, fill=FELT, outline=FELT_DARK, width=3
+            PLAY_X, TABLE_TOP, PLAY_X + PLAY_W, TABLE_BOTTOM, fill=FELT, outline=FELT_DARK, width=3
         )
         self._rect(
-            PLAY_X + 8, 38, PLAY_X + PLAY_W - 8, 150, outline="#2e8060", width=1
+            PLAY_X + 8, TABLE_TOP + 8, PLAY_X + PLAY_W - 8, TABLE_BOTTOM - 8, outline="#2e8060", width=1
         )
         self._rect(
-            LOG_X, 30, WIDTH - GUTTER, HEIGHT - BUTTON_H - 4, fill=PANEL, outline="#263438"
+            LOG_X, TABLE_TOP, WIDTH - GUTTER, HEIGHT - 4, fill=PANEL, outline="#263438"
         )
 
     def _draw_header(self) -> None:
@@ -588,20 +596,20 @@ class HandheldPokerCore:
     def _opponent_slots(count: int) -> list[tuple[int, int, int, int]]:
         if count <= 0:
             return []
-        if count <= 4:
-            width = 48 if count > 2 else 60
-            height = 34
-            gap = 5
-            total = count * width + (count - 1) * gap
-            start_x = PLAY_X + (PLAY_W - total) // 2
-            return [(start_x + i * (width + gap), 42, width, height) for i in range(count)]
-
-        width = 37
-        height = 29
-        gap = 4
-        top_count = 4 if count == 7 else 3
-        bottom_count = count - top_count
-        rows = [(top_count, 38), (bottom_count, 72)]
+        if count <= 3:
+            rows = [(count, 42)]
+            width = 62 if count > 1 else 78
+        elif count == 4:
+            rows = [(2, 40), (2, 86)]
+            width = 76
+        elif count == 5:
+            rows = [(3, 40), (2, 86)]
+            width = 58
+        else:
+            rows = [(3, 40), (3, 86)]
+            width = 58
+        height = 38
+        gap = 6
         slots: list[tuple[int, int, int, int]] = []
         for row_count, y in rows:
             total = row_count * width + (row_count - 1) * gap
@@ -699,12 +707,12 @@ class HandheldPokerCore:
         assert self.table is not None
         board = self.table.board
         total_players = len(self.table.players)
-        scale = 0.82 if total_players > 4 else 0.88
+        scale = 0.86 if total_players > 4 else 0.92
         card_w = int(28 * scale)
-        gap = 10 if total_players > 4 else 15
+        gap = 9 if total_players > 4 else 13
         total_w = 5 * card_w + 4 * gap
         start_x = PLAY_X + (PLAY_W - total_w) // 2
-        y = 112 if total_players > 4 else 106
+        y = 134 if total_players > 4 else 128
         for index in range(5):
             x = start_x + index * (card_w + gap)
             if index < len(board):
@@ -716,37 +724,37 @@ class HandheldPokerCore:
         assert self.table is not None
         hero = self.table.players[0]
         self._rect(
-            PLAY_X, 162, PLAY_X + PLAY_W, HEIGHT - BUTTON_H - 4, fill=PANEL, outline="#263438"
+            PLAY_X, HERO_TOP, PLAY_X + PLAY_W, HEIGHT - 4, fill=PANEL, outline="#263438"
         )
         self._text(
-            13, 168, anchor="nw", text="YOU", fill=GOLD, font=("Menlo", 8, "bold")
+            13, HERO_TOP + 7, anchor="nw", text="YOU", fill=GOLD, font=("Menlo", 8, "bold")
         )
         chips = f"{hero.stack}"
         if hero.street_contribution:
             chips += f"/{hero.street_contribution}"
         self._text(
-            13, 187, anchor="nw", text=chips, fill=INK, font=("Menlo", 7)
+            13, HERO_TOP + 26, anchor="nw", text=chips, fill=INK, font=("Menlo", 7)
         )
 
         if hero.hole_cards:
-            self._draw_card(58, 168, hero.hole_cards[0], scale=0.82)
-            self._draw_card(88, 168, hero.hole_cards[1], scale=0.82)
+            self._draw_card(58, HERO_TOP + 8, hero.hole_cards[0], scale=0.92)
+            self._draw_card(91, HERO_TOP + 8, hero.hole_cards[1], scale=0.92)
         message = status or self._status_text()
         self._text(
-            123,
-            170,
+            128,
+            HERO_TOP + 10,
             anchor="nw",
             text=message,
             fill=INK,
             font=("Menlo", 8 if len(message) < 22 else 7, "bold"),
-            width=92,
+            width=80,
         )
 
     def _draw_log(self) -> None:
         assert self.table is not None
-        line_height = 8
-        top_y = 38
-        max_y = HEIGHT - BUTTON_H - 8
+        line_height = 9
+        top_y = 34
+        max_y = HEIGHT - 8
         max_lines = max(1, (max_y - top_y) // line_height)
         blocks: list[tuple[list[str], str]] = []
         for event in self.visible_events:
@@ -754,7 +762,7 @@ class HandheldPokerCore:
                 continue
             text = self._format_log_text(event.text)
             fill = GOLD if event.kind == "result" else "#d7e0da"
-            wrapped = wrap(text, width=17, break_long_words=True) or [""]
+            wrapped = wrap(text, width=20, break_long_words=True) or [""]
             blocks.append((wrapped, fill))
 
         visible_blocks = self._fit_log_blocks(blocks, max_lines)
@@ -768,7 +776,7 @@ class HandheldPokerCore:
                     anchor="nw",
                     text=text,
                     fill=fill,
-                    font=("Menlo", 6),
+                    font=("Menlo", 7),
                     width=LOG_W - 12,
                 )
                 y += line_height
@@ -811,31 +819,6 @@ class HandheldPokerCore:
         for source, replacement in replacements:
             text = text.replace(source, replacement)
         return text.replace("Player 1", "You")
-
-    def _draw_buttons(self) -> None:
-        y = HEIGHT - BUTTON_H
-        colors = {"J": RED, "K": GREEN, "L": BLUE}
-        button_w = WIDTH // 3
-        for index, button in enumerate(self.soft_buttons):
-            x0 = index * button_w
-            x1 = WIDTH if index == 2 else x0 + button_w
-            fill = colors[button.key] if button.enabled else DISABLED
-            self._rect(x0, y, x1, HEIGHT, fill=fill, outline=BG)
-            self._text(
-                (x0 + x1) // 2,
-                y + 13,
-                text=button.key,
-                fill="#101719",
-                font=("Menlo", 9, "bold"),
-            )
-            self._text(
-                (x0 + x1) // 2,
-                y + 31,
-                text=button.label,
-                fill="white" if button.enabled else "#91a0a3",
-                font=("Menlo", 8, "bold"),
-                width=button_w - 4,
-            )
 
     def _status_text(self) -> str:
         assert self.table is not None
