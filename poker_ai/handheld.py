@@ -32,11 +32,11 @@ BUTTON_PINS = {
 }
 
 # Hex colors are source values compensated for the Pi display's red/blue swap.
-BG = "#44494A"  # desired #4A4944
-PANEL = "#008902"  # desired #028900
-PANEL_EDGE = "#00b802"  # desired #02b800
-FELT = "#00d674"  # desired #74d600
-FELT_DARK = "#00b05e"  # desired #5eb000
+BG = "#25272A"  # desired #2A2725
+PANEL = "#005201"  # desired #015200
+PANEL_EDGE = "#007002"  # desired #027000
+FELT = "#008545"  # desired #458500
+FELT_DARK = "#006636"  # desired #366600
 INK = "#edf2e8"
 MUTED = "#9fb0a7"
 GOLD = "#f1c75b"
@@ -46,14 +46,14 @@ GREEN = "#58b875"
 DISABLED = "#364044"
 CARD_FACE = "#f7f2df"
 CARD_EDGE = "#d7c9a0"
-BLACK_CARD = "#2b2b2b"
+BLACK_CARD = "#000000"
 RED_CARD = "#0505a9"  # desired #a90505
 EMPTY_CARD = "#168f3f"  # desired #3f8f16
 EMPTY_CARD_EDGE = "#66e591"  # desired #91e566
-BOT_BOX = "#9f713b"  # desired #3b719f
-BOT_BOX_ACTIVE = "#b88347"  # desired #4783b8
-BOT_BOX_EDGE = "#c8a36f"  # desired #6fa3c8
-BOT_BOX_ACTIVE_EDGE = "#e6c89b"  # desired #9bc8e6
+BOT_BOX = "#6f4b22"  # desired #224b6f
+BOT_BOX_ACTIVE = "#83582b"  # desired #2b5883
+BOT_BOX_EDGE = "#91693d"  # desired #3d6991
+BOT_BOX_ACTIVE_EDGE = "#a87d4d"  # desired #4d7da8
 WHITE = "#ffffff"
 SUIT_SYMBOLS = {
     "s": "\u2660",
