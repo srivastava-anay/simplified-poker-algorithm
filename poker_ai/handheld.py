@@ -146,7 +146,7 @@ class HandheldPokerCore:
             self.table = MultiplayerTable(
                 human_players=1,
                 bot_players=self.bot_count,
-                starting_stack=500,
+                starting_stack=1000,
                 small_blind=5,
                 big_blind=10,
                 simulations=simulations,
@@ -758,7 +758,7 @@ class HandheldPokerCore:
                 continue
             text = self._format_log_text(event.text)
             fill = GOLD if event.kind == "result" else "#d7e0da"
-            wrapped = wrap(text, width=20, break_long_words=True) or [""]
+            wrapped = wrap(text, width=16, break_long_words=True) or [""]
             blocks.append((wrapped, fill))
 
         visible_blocks = self._fit_log_blocks(blocks, max_lines)
@@ -847,7 +847,7 @@ class HandheldPokerCore:
         pad = max(1, int(3 * scale))
         rank_size = max(7, min(int(width * 0.55), int(height * 0.5)))
         suit_space = max(5, height - rank_size - pad)
-        suit_size = max(8, min(int(width * 1.35), int(height * 1.25), int(suit_space * 1.9)))
+        suit_size = max(7, min(int(width * 0.95), int(height * 0.9), int(suit_space * 1.25)))
         self._text(
             x + pad,
             y + pad,
@@ -857,8 +857,8 @@ class HandheldPokerCore:
             font=("Menlo", rank_size, "bold"),
         )
         self._text(
-            x + width + max(1, int(1 * scale)),
-            y + height + max(3, int(11 * scale)),
+            x + width,
+            y + height + max(2, int(5 * scale)),
             anchor="se",
             text=SUIT_SYMBOLS[card.suit],
             fill=fill,
