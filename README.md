@@ -40,6 +40,26 @@ Running without arguments uses a built-in flop example:
 poker-ai
 ```
 
+## Raspberry Pi Hardware Smoke Test
+
+After wiring the ILI9341 display and three buttons, install the Pi-only hardware
+libraries on the Raspberry Pi:
+
+```bash
+python3 -m pip install adafruit-circuitpython-rgb-display gpiozero pillow
+```
+
+Then run:
+
+```bash
+python3 pi_hardware_test.py
+```
+
+The test draws a 320x240 landscape screen and shows the live state of the three
+buttons wired to `GPIO5`, `GPIO6`, and `GPIO13`. Each button should be wired
+from the GPIO pin to `GND`; the script uses internal pull-ups, so pressed reads
+active-low.
+
 Or provide a situation:
 
 ```bash
@@ -225,6 +245,60 @@ their decisions remain readable.
 Unlike the original terminal game, the graphical table supports multiplayer
 betting and side pots for all-in situations. It remains a local shared-screen
 game; it does not connect multiple computers over a network.
+
+## Handheld screen/button demo
+
+Launch the 320x240 laptop prototype for the ILI9341 version:
+
+```bash
+source .venv/bin/activate
+python handheld_poker.py
+```
+
+Or use the installed shortcut:
+
+```bash
+poker-handheld
+```
+
+The window is fixed at 320x240 pixels to match a landscape ILI9341 display.
+It first asks how many bots you want to play against, from one to seven.
+Keyboard keys emulate the three Raspberry Pi buttons.
+
+On the setup screen:
+
+- `j` - fewer bots
+- `k` - start game
+- `l` - more bots
+
+During a hand:
+
+- `j` - left soft button, usually fold
+- `k` - middle soft button, check/call or next hand
+- `l` - enter bet/raise sizing when betting is legal
+
+In bet/raise sizing mode:
+
+- `j` - lower the amount; pressing again at the minimum backs out
+- `k` - confirm the selected amount
+- `l` - raise the amount; the maximum amount is all-in
+
+Amount changes always move one chip at a time, but the repeat rate keeps
+accelerating while held so large ranges remain quick to traverse. Holding `j`
+moves down to the minimum without backing out; release and press `j` again at
+the minimum to cancel sizing.
+
+The table view scales the opponent badges, community cards, and AI simulation
+budget based on the chosen player count so the layout remains readable and
+responsive on the tiny screen. Live bot cards are not drawn while a hand is in
+progress; showdown cards are revealed inside each bot's box while the log only
+announces each player's hand class. Folded bots collapse to small badges,
+leaving more table space for the remaining players. The handheld view pauses
+after each betting round ends and waits for any button to continue to the next
+street.
+The right column under the round label is reserved for the move log, which
+wraps long entries, skips community-card announcements, and clears at the start
+of each betting round.
 
 ## Python usage
 

@@ -58,6 +58,7 @@ class MultiplayerTable:
     big_blind: int = 10
     simulations: int = 2_000
     seed: int | None = None
+    defer_round_advance: bool = False
     players: list[TablePlayer] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -114,6 +115,7 @@ class MultiplayerTable:
         self.hand_over = True
         self.match_over = False
         self.last_result = ""
+        self.awaiting_round_advance = False
 
     @property
     def pot(self) -> int:
@@ -151,6 +153,7 @@ class MultiplayerTable:
         self.stage = GameStage.PREFLOP
         self.current_bet = 0
         self.minimum_raise = self.big_blind
+        self.awaiting_round_advance = False
         self.pending = set()
         self.deck = list(full_deck())
         self._rng.shuffle(self.deck)
@@ -176,7 +179,8 @@ class MultiplayerTable:
             first_actor = self._next_live(self.big_blind_index)
 
         self._event(
-            f"Hand {self.hand_number}. {self.players[self.dealer_index].name} has the button."
+            f"Hand {self.hand_number}. "
+            f"{self._player_phrase(self.dealer_index, 'has the button', 'have the button')}."
         )
         self._post_blind(self.small_blind_index, self.small_blind, "small blind")
         self._post_blind(self.big_blind_index, self.big_blind, "big blind")
@@ -187,7 +191,7 @@ class MultiplayerTable:
             self._runout_and_showdown()
 
     def legal_actions(self, index: int) -> dict[str, int | bool]:
-        if self.hand_over or index != self.actor_index:
+        if self.hand_over or self.awaiting_round_advance or index != self.actor_index:
             return {}
         player = self.players[index]
         to_call = max(0, self.current_bet - player.street_contribution)
@@ -229,19 +233,20 @@ class MultiplayerTable:
                 raise ValueError("Check is available for free")
             player.folded = True
             observed = ObservedAction.FOLD
-            self._event(f"{player.name} folds.")
+            self._event(f"{self._player_phrase(index, 'folds', 'fold')}.")
         elif action == "check":
             if to_call:
                 raise ValueError(f"{to_call} chips must be called")
             observed = ObservedAction.CHECK
-            self._event(f"{player.name} checks.")
+            self._event(f"{self._player_phrase(index, 'checks', 'check')}.")
         elif action == "call":
             if not to_call:
                 raise ValueError("There is no bet to call")
             paid = self._pay(index, min(to_call, player.stack))
             observed = ObservedAction.CALL
             suffix = " and is all-in" if player.all_in else ""
-            self._event(f"{player.name} calls {paid}{suffix}.")
+            phrase = self._player_phrase(index, f"calls {paid}", f"call {paid}")
+            self._event(f"{phrase}{suffix}.")
         elif action in {"bet", "raise", "allin"}:
             target = player.street_contribution + player.stack if action == "allin" else amount
             if target is None:
@@ -261,9 +266,21 @@ class MultiplayerTable:
             if increase >= self.minimum_raise:
                 self.minimum_raise = increase
             observed = ObservedAction.BET if old_bet == 0 else ObservedAction.RAISE
-            verb = "bets" if observed == ObservedAction.BET else "raises to"
+            phrase = (
+                self._player_phrase(
+                    index,
+                    f"bets {self.current_bet}",
+                    f"bet {self.current_bet}",
+                )
+                if observed == ObservedAction.BET
+                else self._player_phrase(
+                    index,
+                    f"raises to {self.current_bet}",
+                    f"raise to {self.current_bet}",
+                )
+            )
             suffix = " and is all-in" if player.all_in else ""
-            self._event(f"{player.name} {verb} {self.current_bet}{suffix}.")
+            self._event(f"{phrase}{suffix}.")
             raised = True
         else:
             raise ValueError("Unknown action")
@@ -352,7 +369,10 @@ class MultiplayerTable:
             self._clear_contributions()
             self.hand_over = True
             self.actor_index = None
-            self.last_result = f"{winner.name} wins {amount}; everyone else folded."
+            self.last_result = (
+                f"{self._player_phrase(remaining[0], f'wins {amount}', f'win {amount}')}; "
+                "everyone else folded."
+            )
             self._event(self.last_result, "result")
             return
 
@@ -367,9 +387,19 @@ class MultiplayerTable:
         self.pending.intersection_update(self._eligible_to_act())
 
         if not self.pending:
-            self._finish_street()
+            if self.defer_round_advance:
+                self.awaiting_round_advance = True
+                self.actor_index = None
+            else:
+                self._finish_street()
             return
         self.actor_index = self._first_pending_from(index)
+
+    def advance_round(self) -> None:
+        if not self.awaiting_round_advance or self.hand_over:
+            return
+        self.awaiting_round_advance = False
+        self._finish_street()
 
     def _finish_street(self) -> None:
         self._refund_unmatched_contribution()
@@ -421,10 +451,11 @@ class MultiplayerTable:
             if player.in_hand
         }
         for index in scores:
-            player = self.players[index]
+            hand_name = self.evaluator.class_to_string(
+                self.evaluator.get_rank_class(scores[index])
+            )
             self._event(
-                f"{player.name} shows {self._cards(player.hole_cards or ())} — "
-                f"{self.evaluator.class_to_string(self.evaluator.get_rank_class(scores[index]))}."
+                f"{self._player_phrase(index, 'shows', 'show')} — {hand_name}."
             )
 
         levels = sorted(
@@ -451,7 +482,10 @@ class MultiplayerTable:
 
         for index, amount in awards.items():
             self.players[index].stack += amount
-            self._event(f"{self.players[index].name} wins {amount}.", "result")
+            self._event(
+                f"{self._player_phrase(index, f'wins {amount}', f'win {amount}')}.",
+                "result",
+            )
         self._clear_contributions()
         self.hand_over = True
         self.actor_index = None
@@ -466,7 +500,12 @@ class MultiplayerTable:
 
     def _post_blind(self, index: int, amount: int, name: str) -> None:
         paid = self._pay(index, min(amount, self.players[index].stack))
-        self._event(f"{self.players[index].name} posts {name}: {paid}.")
+        phrase = self._player_phrase(
+            index,
+            f"posts {name}: {paid}",
+            f"post {name}: {paid}",
+        )
+        self._event(f"{phrase}.")
 
     def _pay(self, index: int, amount: int) -> int:
         player = self.players[index]
@@ -491,7 +530,11 @@ class MultiplayerTable:
         largest.street_contribution -= refund
         largest.total_contribution -= refund
         largest.stack += refund
-        self._event(f"{largest.name} receives {refund} unmatched chips back.")
+        index = self.players.index(largest)
+        self._event(
+            f"{self._player_phrase(index, f'receives {refund}', f'receive {refund}')} "
+            "unmatched chips back."
+        )
 
     def _clear_contributions(self) -> None:
         for player in self.players:
@@ -557,6 +600,11 @@ class MultiplayerTable:
 
     def _event(self, text: str, kind: str = "info") -> None:
         self.events.append(TableEvent(text, kind))
+
+    def _player_phrase(self, index: int, third_person: str, second_person: str) -> str:
+        name = self.players[index].name
+        verb = second_person if name.lower() == "you" else third_person
+        return f"{name} {verb}"
 
     @staticmethod
     def _cards(cards: tuple[Card, ...] | list[Card]) -> str:

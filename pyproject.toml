@@ -21,6 +21,7 @@ dev = [
 poker-ai = "poker_ai.cli:main"
 play-poker = "poker_ai.game:main"
 poker-table = "poker_ai.ui:main"
+poker-handheld = "poker_ai.handheld:main"
 
 [tool.setuptools.packages.find]
 include = ["poker_ai*"]
