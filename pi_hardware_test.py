@@ -11,7 +11,9 @@ from __future__ import annotations
 import sys
 import time
 
-LANDSCAPE_ROTATIONS = (90, 270)
+WIDTH = 320
+HEIGHT = 240
+ROTATION = 90
 
 BUTTONS = {
     "J / LEFT": 5,
@@ -63,20 +65,16 @@ def make_display(board: object, digitalio: object, ili9341: object) -> object:
     dc = digitalio.DigitalInOut(board.D25)
     rst = digitalio.DigitalInOut(board.D24)
     spi = board.SPI()
-    display = None
-    for rotation in LANDSCAPE_ROTATIONS:
-        display = ili9341.ILI9341(
-            spi,
-            cs=cs,
-            dc=dc,
-            rst=rst,
-            baudrate=32_000_000,
-            rotation=rotation,
-        )
-        if display.width >= display.height:
-            return display
-    assert display is not None
-    return display
+    return ili9341.ILI9341(
+        spi,
+        cs=cs,
+        dc=dc,
+        rst=rst,
+        baudrate=32_000_000,
+        width=WIDTH,
+        height=HEIGHT,
+        rotation=ROTATION,
+    )
 
 
 def make_buttons(board: object, digitalio: object) -> dict[str, object]:
