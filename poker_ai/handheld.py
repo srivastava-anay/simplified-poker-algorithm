@@ -31,12 +31,10 @@ BUTTON_PINS = {
     "L": 13,
 }
 
-# Hex colors are source values compensated for the Pi display's red/blue swap.
-BG = "#25272A"  # desired #2A2725
-PANEL = "#005201"  # desired #015200
-PANEL_EDGE = "#007002"  # desired #027000
-FELT = "#008545"  # desired #458500
-FELT_DARK = "#006636"  # desired #366600
+BG = "#101719"
+PANEL = "#172326"
+FELT = "#1f6b4d"
+FELT_DARK = "#124332"
 INK = "#edf2e8"
 MUTED = "#9fb0a7"
 GOLD = "#f1c75b"
@@ -48,12 +46,6 @@ CARD_FACE = "#f7f2df"
 CARD_EDGE = "#d7c9a0"
 BLACK_CARD = "#000000"
 RED_CARD = "#0505a9"  # desired #a90505
-EMPTY_CARD = "#168f3f"  # desired #3f8f16
-EMPTY_CARD_EDGE = "#66e591"  # desired #91e566
-BOT_BOX = "#6f4b22"  # desired #224b6f
-BOT_BOX_ACTIVE = "#83582b"  # desired #2b5883
-BOT_BOX_EDGE = "#91693d"  # desired #3d6991
-BOT_BOX_ACTIVE_EDGE = "#a87d4d"  # desired #4d7da8
 WHITE = "#ffffff"
 SUIT_SYMBOLS = {
     "s": "\u2660",
@@ -556,7 +548,7 @@ class HandheldPokerCore:
             PLAY_X, TABLE_TOP, PLAY_X + PLAY_W, TABLE_BOTTOM, fill=FELT, outline=FELT_DARK
         )
         self._rect(
-            LOG_X, TABLE_TOP, WIDTH - GUTTER, HEIGHT - 4, fill=PANEL, outline=PANEL_EDGE
+            LOG_X, TABLE_TOP, WIDTH - GUTTER, HEIGHT - 4, fill=PANEL, outline="#263438"
         )
 
     def _draw_header(self) -> None:
@@ -641,8 +633,8 @@ class HandheldPokerCore:
             self._draw_folded_opponent(bot_index, x, y, width, height, compact)
             return
         active = self.table.actor_index == bot_index
-        fill = BOT_BOX_ACTIVE if active else BOT_BOX
-        outline = BOT_BOX_ACTIVE_EDGE if active else BOT_BOX_EDGE
+        fill = "#29423c" if active else "#18352d"
+        outline = GOLD if active else "#3d8264"
         self._rect(
             x, y, x + width, y + height, fill=fill, outline=outline
         )
@@ -729,7 +721,7 @@ class HandheldPokerCore:
         assert self.table is not None
         hero = self.table.players[0]
         self._rect(
-            PLAY_X, HERO_TOP, PLAY_X + PLAY_W, HEIGHT - 4, fill=PANEL, outline=PANEL_EDGE
+            PLAY_X, HERO_TOP, PLAY_X + PLAY_W, HEIGHT - 4, fill=PANEL, outline="#263438"
         )
         self._text(
             13, HERO_TOP + 14, anchor="nw", text="YOU", fill=GOLD, font=("Menlo", 8, "bold")
@@ -883,14 +875,14 @@ class HandheldPokerCore:
         width = int(28 * scale)
         height = int(34 * scale)
         self._rect(
-            x, y, x + width, y + height, fill=EMPTY_CARD, outline=EMPTY_CARD_EDGE
+            x, y, x + width, y + height, fill=FELT_DARK, outline="#3e8669"
         )
 
     def _draw_card_back(self, x: int, y: int, scale: float = 1.0) -> None:
         width = int(28 * scale)
         height = int(38 * scale)
         self._rect(
-            x, y, x + width, y + height, fill=BOT_BOX, outline=BOT_BOX_EDGE
+            x, y, x + width, y + height, fill="#334654", outline="#8fb0bd"
         )
         inset = max(2, int(5 * scale))
         self._rect(
@@ -898,7 +890,7 @@ class HandheldPokerCore:
             y + inset,
             x + width - inset,
             y + height - inset,
-            outline=BOT_BOX_EDGE,
+            outline="#8fb0bd",
         )
 
 
