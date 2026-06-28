@@ -8,6 +8,7 @@ Wiring expected:
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 
@@ -160,10 +161,56 @@ def send_image(display: object, image: object, image_module: object) -> None:
         raise original_error
 
 
+def benchmark_display(display: object, image_module: object) -> None:
+    width = display.width
+    height = display.height
+    print(f"Benchmarking display path at {width}x{height}")
+    print(f"Display class: {type(display)!r}")
+    print(f"Configured baudrate: {getattr(display, '_baudrate', 'unknown')}")
+
+    image = image_module.new("RGB", (width, height), (255, 0, 0))
+    start = time.monotonic()
+    send_image(display, image, image_module)
+    normal_elapsed = time.monotonic() - start
+    print(f"display.image(PIL RGB full frame): {normal_elapsed:.3f}s")
+
+    block = getattr(display, "_block", None)
+    if block is None:
+        print("display._block is unavailable; cannot raw-transfer benchmark.")
+        return
+
+    raw = (b"\x07\xe0" * (width * height))
+    start = time.monotonic()
+    try:
+        block(0, 0, width - 1, height - 1, raw)
+    except Exception as exc:  # noqa: BLE001 - this is a hardware diagnostic.
+        print(f"display._block raw RGB565 failed: {exc!r}")
+        return
+    raw_elapsed = time.monotonic() - start
+    kib = len(raw) / 1024
+    print(f"display._block raw RGB565 full frame: {raw_elapsed:.3f}s ({kib:.0f} KiB)")
+    if raw_elapsed > 1.0:
+        print("Raw SPI transfer is slow; focus on SPI/backend/config.")
+    else:
+        print("Raw SPI transfer is OK; display.image/Pillow conversion is the bottleneck.")
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="Measure full-frame PIL and raw RGB565 display transfer times.",
+    )
+    args = parser.parse_args()
+
     board, digitalio, ili9341, pil = import_hardware()
     Image, ImageDraw, ImageFont = pil
     display = make_display(board, digitalio, ili9341)
+    if args.benchmark:
+        benchmark_display(display, Image)
+        return 0
+
     buttons = make_buttons(board, digitalio)
     fonts = {
         "title": load_font(ImageFont, 17),
