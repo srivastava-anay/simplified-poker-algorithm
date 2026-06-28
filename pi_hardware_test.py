@@ -173,10 +173,21 @@ def main() -> int:
     print("Running ILI9341/button test. Press Ctrl+C to stop.")
     print("Buttons are active-low: GPIO -> button -> GND.")
     print(f"Display size reported by driver: {display.width}x{display.height}")
+    print("Watching GPIO button states:")
+    for label, pin in BUTTONS.items():
+        print(f"  {label}: GPIO{pin}")
     tick = 0
+    last_states: dict[str, bool] | None = None
     try:
         while True:
             states = {label: not button.value for label, button in buttons.items()}
+            if states != last_states:
+                parts = [
+                    f"{label.split()[0]}={'DOWN' if pressed else 'UP'}"
+                    for label, pressed in states.items()
+                ]
+                print(f"Buttons: {', '.join(parts)}", flush=True)
+                last_states = states.copy()
             draw_screen(display, Image, ImageDraw, fonts, states, tick)
             tick += 1
             time.sleep(0.08)
