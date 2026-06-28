@@ -94,7 +94,7 @@ def draw_screen(
     fonts: dict[str, object],
     button_states: dict[str, bool],
     tick: int,
-) -> None:
+) -> float:
     width = display.width
     height = display.height
     image = image_module.new("RGB", (width, height), BG)
@@ -123,7 +123,9 @@ def draw_screen(
         draw.text((x0 + 10, y0 + 12), label.split()[0], font=fonts["large"], fill=text_fill)
         draw.text((x0 + 10, y0 + 44), state, font=fonts["body"], fill=text_fill)
 
+    start = time.monotonic()
     send_image(display, image, image_module)
+    return time.monotonic() - start
 
 
 def send_image(display: object, image: object, image_module: object) -> None:
@@ -179,9 +181,12 @@ def main() -> int:
     tick = 0
     last_states: dict[str, bool] | None = None
     last_raw_print = 0.0
+    last_draw = 0.0
     try:
         while True:
+            now = time.monotonic()
             states = {label: not button.value for label, button in buttons.items()}
+            state_changed = states != last_states
             if states != last_states:
                 parts = [
                     f"{label.split()[0]}={'DOWN' if pressed else 'UP'}"
@@ -189,7 +194,6 @@ def main() -> int:
                 ]
                 print(f"Buttons: {', '.join(parts)}", flush=True)
                 last_states = states.copy()
-            now = time.monotonic()
             if now - last_raw_print >= 1.0:
                 raw_parts = [
                     f"GPIO{BUTTONS[label]}={'LOW' if not button.value else 'HIGH'}"
@@ -197,9 +201,12 @@ def main() -> int:
                 ]
                 print(f"Raw pins: {', '.join(raw_parts)}", flush=True)
                 last_raw_print = now
-            draw_screen(display, Image, ImageDraw, fonts, states, tick)
-            tick += 1
-            time.sleep(0.08)
+            if state_changed or now - last_draw >= 1.0:
+                elapsed = draw_screen(display, Image, ImageDraw, fonts, states, tick)
+                print(f"Display update: {elapsed:.2f}s", flush=True)
+                tick += 1
+                last_draw = time.monotonic()
+            time.sleep(0.03)
     except KeyboardInterrupt:
         return 0
 
