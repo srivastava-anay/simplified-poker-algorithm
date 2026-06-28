@@ -31,21 +31,22 @@ BUTTON_PINS = {
     "L": 13,
 }
 
-BG = "#101719"
-PANEL = "#172326"
-FELT = "#1f6b4d"
-FELT_DARK = "#124332"
+BG = "#0d1b1d"
+PANEL = "#193036"
+FELT = "#1f8a5f"
+FELT_DARK = "#125a40"
 INK = "#edf2e8"
-MUTED = "#9fb0a7"
-GOLD = "#f1c75b"
-RED = "#db4d4d"
-BLUE = "#4f9fd8"
-GREEN = "#58b875"
+MUTED = "#b4c7bd"
+GOLD = "#ffd45f"
+RED = "#ff5656"
+BLUE = "#55b6f2"
+GREEN = "#62d18a"
 DISABLED = "#364044"
 CARD_FACE = "#f7f2df"
+RED_CARD_FACE = "#fff0ea"
 CARD_EDGE = "#d7c9a0"
 BLACK_CARD = "#25292c"
-RED_CARD = "#a73535"
+RED_CARD = "#e0182d"
 SUIT_SYMBOLS = {
     "s": "\u2660",
     "h": "\u2665",
@@ -558,7 +559,7 @@ class HandheldPokerCore:
             10, 10, anchor="nw", text=title, fill=GOLD, font=("Menlo", 10, "bold")
         )
         self._text(
-            PLAY_X + PLAY_W // 2,
+            WIDTH // 2,
             10,
             anchor="n",
             text=f"POT {self.table.pot}",
@@ -840,10 +841,16 @@ class HandheldPokerCore:
     def _draw_card(self, x: int, y: int, card: Card, scale: float = 1.0) -> None:
         width = int(28 * scale)
         height = int(34 * scale)
+        red_suit = card.suit in {"h", "d"}
         self._rect(
-            x, y, x + width, y + height, fill=CARD_FACE, outline=CARD_EDGE
+            x,
+            y,
+            x + width,
+            y + height,
+            fill=RED_CARD_FACE if red_suit else CARD_FACE,
+            outline=RED_CARD if red_suit else CARD_EDGE,
         )
-        fill = RED_CARD if card.suit in {"h", "d"} else BLACK_CARD
+        fill = RED_CARD if red_suit else BLACK_CARD
         pad = max(1, int(3 * scale))
         rank_size = max(7, min(int(width * 0.55), int(height * 0.5)))
         suit_space = max(5, height - rank_size - pad)
