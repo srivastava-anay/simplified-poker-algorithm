@@ -11,8 +11,7 @@ from __future__ import annotations
 import sys
 import time
 
-WIDTH = 320
-HEIGHT = 240
+LANDSCAPE_ROTATIONS = (90, 270)
 
 BUTTONS = {
     "J / LEFT": 5,
@@ -64,14 +63,20 @@ def make_display(board: object, digitalio: object, ili9341: object) -> object:
     dc = digitalio.DigitalInOut(board.D25)
     rst = digitalio.DigitalInOut(board.D24)
     spi = board.SPI()
-    return ili9341.ILI9341(
-        spi,
-        cs=cs,
-        dc=dc,
-        rst=rst,
-        baudrate=32_000_000,
-        rotation=90,
-    )
+    display = None
+    for rotation in LANDSCAPE_ROTATIONS:
+        display = ili9341.ILI9341(
+            spi,
+            cs=cs,
+            dc=dc,
+            rst=rst,
+            baudrate=32_000_000,
+            rotation=rotation,
+        )
+        if display.width >= display.height:
+            return display
+    assert display is not None
+    return display
 
 
 def make_buttons(board: object, digitalio: object) -> dict[str, object]:
@@ -92,27 +97,29 @@ def draw_screen(
     button_states: dict[str, bool],
     tick: int,
 ) -> None:
-    image = image_module.new("RGB", (WIDTH, HEIGHT), BG)
+    width = display.width
+    height = display.height
+    image = image_module.new("RGB", (width, height), BG)
     draw = image_draw.Draw(image)
 
-    draw.rectangle((0, 0, WIDTH, 32), fill=PANEL)
+    draw.rectangle((0, 0, width, 32), fill=PANEL)
     draw.text((10, 7), "ILI9341 + BUTTON TEST", font=fonts["title"], fill=GOLD)
-    draw.text((250, 9), f"{tick:04d}", font=fonts["small"], fill=MUTED)
+    draw.text((width - 70, 9), f"{tick:04d}", font=fonts["small"], fill=MUTED)
 
-    draw.rectangle((12, 44, WIDTH - 12, 114), outline=GREEN, width=3)
+    draw.rectangle((12, 44, width - 12, 114), outline=GREEN, width=3)
     draw.text((28, 60), "Screen OK", font=fonts["large"], fill=INK)
     draw.text((28, 92), "Press J / K / L", font=fonts["body"], fill=MUTED)
 
     colors = [RED, GREEN, BLUE]
-    y0 = 136
-    button_w = 92
+    y0 = height - 104
     gap = 10
+    button_w = max(40, (width - 24 - gap * 2) // 3)
     for index, (label, pressed) in enumerate(button_states.items()):
         x0 = 12 + index * (button_w + gap)
         x1 = x0 + button_w
         fill = colors[index] if pressed else PANEL
         outline = colors[index]
-        draw.rectangle((x0, y0, x1, y0 + 70), fill=fill, outline=outline, width=3)
+        draw.rectangle((x0, y0, x1, height - 12), fill=fill, outline=outline, width=3)
         text_fill = BG if pressed else INK
         state = "DOWN" if pressed else "UP"
         draw.text((x0 + 10, y0 + 12), label.split()[0], font=fonts["large"], fill=text_fill)
@@ -135,6 +142,7 @@ def main() -> int:
 
     print("Running ILI9341/button test. Press Ctrl+C to stop.")
     print("Buttons are active-low: GPIO -> button -> GND.")
+    print(f"Display size reported by driver: {display.width}x{display.height}")
     tick = 0
     try:
         while True:
