@@ -544,10 +544,7 @@ class HandheldPokerCore:
         assert self.table is not None
         self._rect(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
         self._rect(
-            PLAY_X, TABLE_TOP, PLAY_X + PLAY_W, TABLE_BOTTOM, fill=FELT, outline=FELT_DARK, width=3
-        )
-        self._rect(
-            PLAY_X + 8, TABLE_TOP + 8, PLAY_X + PLAY_W - 8, TABLE_BOTTOM - 8, outline="#2e8060", width=1
+            PLAY_X, TABLE_TOP, PLAY_X + PLAY_W, TABLE_BOTTOM, fill=FELT, outline=FELT_DARK
         )
         self._rect(
             LOG_X, TABLE_TOP, WIDTH - GUTTER, HEIGHT - 4, fill=PANEL, outline="#263438"
@@ -646,7 +643,7 @@ class HandheldPokerCore:
             anchor="nw",
             text=f"B{bot_index}",
             fill=GOLD,
-            font=("Menlo", 7 if compact else 8, "bold"),
+            font=("Menlo", 8, "bold"),
         )
         if self.table.hand_over and bot.in_hand and bot.hole_cards:
             self._draw_showdown_cards(x, y, width, height, bot.hole_cards, compact)
@@ -657,7 +654,7 @@ class HandheldPokerCore:
                 anchor="sw",
                 text=detail,
                 fill=INK,
-                font=("Menlo", 6 if compact else 7),
+                font=("Menlo", 8),
             )
 
     def _draw_showdown_cards(
@@ -700,7 +697,7 @@ class HandheldPokerCore:
             y0 + h // 2,
             text=f"B{bot_index} F",
             fill="#a7b3b5",
-            font=("Menlo", 5 if compact else 6, "bold"),
+            font=("Menlo", 8, "bold"),
         )
 
     def _draw_board(self) -> None:
@@ -732,7 +729,7 @@ class HandheldPokerCore:
         if hero.street_contribution:
             chips += f"/{hero.street_contribution}"
         self._text(
-            13, HERO_TOP + 33, anchor="nw", text=chips, fill=INK, font=("Menlo", 7)
+            13, HERO_TOP + 33, anchor="nw", text=chips, fill=INK, font=("Menlo", 8)
         )
 
         if hero.hole_cards:
@@ -775,7 +772,7 @@ class HandheldPokerCore:
                     anchor="nw",
                     text=text,
                     fill=fill,
-                    font=("Menlo", 7),
+                    font=("Menlo", 8),
                     width=LOG_W - 12,
                 )
                 y += line_height
