@@ -45,7 +45,8 @@ DISABLED = "#364044"
 CARD_FACE = "#f7f2df"
 CARD_EDGE = "#d7c9a0"
 BLACK_CARD = "#25292c"
-RED_CARD = "#a90505"
+# The ILI9341 path renders this with red/blue swapped, landing near #a90505.
+RED_CARD = "#0505a9"
 SUIT_SYMBOLS = {
     "s": "\u2660",
     "h": "\u2665",
@@ -654,7 +655,7 @@ class HandheldPokerCore:
                 anchor="sw",
                 text=detail,
                 fill=INK,
-                font=("Menlo", 8),
+                font=("Numbers", 8, "bold"),
             )
 
     def _draw_showdown_cards(
@@ -729,7 +730,7 @@ class HandheldPokerCore:
         if hero.street_contribution:
             chips += f"/{hero.street_contribution}"
         self._text(
-            13, HERO_TOP + 33, anchor="nw", text=chips, fill=INK, font=("Menlo", 8)
+            13, HERO_TOP + 33, anchor="nw", text=chips, fill=INK, font=("Numbers", 8, "bold")
         )
 
         if hero.hole_cards:
@@ -1018,7 +1019,7 @@ class PiHandheldPokerApp(HandheldPokerCore):
         self.buttons = make_buttons(board, digitalio)
         self.image = None
         self.draw = None
-        self._font_cache: dict[tuple[int, bool], object] = {}
+        self._font_cache: dict[tuple[int, bool, bool], object] = {}
         self._scheduled_jobs: dict[str, tuple[float, Callable[[], None]]] = {}
         self._job_counter = 0
         self._fast_transfer = True
@@ -1126,20 +1127,31 @@ class PiHandheldPokerApp(HandheldPokerCore):
     def _font(self, font_spec: object) -> object:
         size = 12
         bold = False
+        mono = False
         if isinstance(font_spec, tuple):
             for part in font_spec:
                 if isinstance(part, int):
                     size = part
-                elif isinstance(part, str) and part.lower() == "bold":
-                    bold = True
-        key = (size, bold)
+                elif isinstance(part, str):
+                    lowered = part.lower()
+                    if lowered == "bold":
+                        bold = True
+                    elif lowered in {"numbers", "mono", "monospace"}:
+                        mono = True
+        key = (size, bold, mono)
         if key not in self._font_cache:
-            candidates = (
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            )
-            if not bold:
-                candidates = tuple(reversed(candidates))
+            if mono:
+                candidates = (
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                )
+            else:
+                candidates = (
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                )
+                if not bold:
+                    candidates = tuple(reversed(candidates))
             for path in candidates:
                 try:
                     self._font_cache[key] = self.ImageFont.truetype(path, size)
