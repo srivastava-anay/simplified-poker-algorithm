@@ -384,7 +384,7 @@ class HandheldPokerCore:
         self._continue_turn()
 
     def _bet_step(self, key: str, held: bool) -> int:
-        return 1
+        return 10 if held else 1
 
     def _flash(self, text: str) -> None:
         self._refresh(status=text[:28])
@@ -858,7 +858,7 @@ class HandheldPokerCore:
         )
         self._text(
             x + width,
-            y + height + max(2, int(5 * scale)),
+            y + height + max(1, int(2 * scale)),
             anchor="se",
             text=SUIT_SYMBOLS[card.suit],
             fill=fill,
