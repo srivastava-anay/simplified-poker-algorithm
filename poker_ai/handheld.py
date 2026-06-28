@@ -642,7 +642,7 @@ class HandheldPokerCore:
             x + 4,
             y + 4,
             anchor="nw",
-            text=f"B{bot_index}",
+            text=bot.name,
             fill=GOLD,
             font=("Menlo", 8, "bold"),
         )
@@ -686,7 +686,7 @@ class HandheldPokerCore:
         height: int,
         compact: bool,
     ) -> None:
-        w = min(width, 30 if compact else 36)
+        w = min(width, 44 if compact else 52)
         h = min(height, 16 if compact else 18)
         x0 = x + (width - w) // 2
         y0 = y + (height - h) // 2
@@ -696,9 +696,9 @@ class HandheldPokerCore:
         self._text(
             x0 + w // 2,
             y0 + h // 2,
-            text=f"B{bot_index} F",
+            text=f"{self.table.players[bot_index].name} F",
             fill="#a7b3b5",
-            font=("Menlo", 8, "bold"),
+            font=("Menlo", 6 if compact else 7, "bold"),
         )
 
     def _draw_board(self) -> None:
