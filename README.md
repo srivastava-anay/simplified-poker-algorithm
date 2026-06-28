@@ -46,7 +46,7 @@ After wiring the ILI9341 display and three buttons, install the Pi-only hardware
 libraries on the Raspberry Pi:
 
 ```bash
-python3 -m pip install adafruit-circuitpython-rgb-display gpiozero pillow
+python3 -m pip install adafruit-circuitpython-rgb-display pillow numpy
 ```
 
 Then run:
@@ -246,9 +246,9 @@ Unlike the original terminal game, the graphical table supports multiplayer
 betting and side pots for all-in situations. It remains a local shared-screen
 game; it does not connect multiple computers over a network.
 
-## Handheld screen/button demo
+## Handheld screen/button game
 
-Launch the 320x240 laptop prototype for the ILI9341 version:
+Launch the 320x240 handheld game:
 
 ```bash
 source .venv/bin/activate
@@ -261,9 +261,13 @@ Or use the installed shortcut:
 poker-handheld
 ```
 
-The window is fixed at 320x240 pixels to match a landscape ILI9341 display.
-It first asks how many bots you want to play against, from one to seven.
-Keyboard keys emulate the three Raspberry Pi buttons.
+The handheld launcher is for the Raspberry Pi hardware and does not require
+Tkinter. It uses the same wiring as `pi_hardware_test.py`: ILI9341 SPI0 on
+`GPIO11`/`GPIO10`/`GPIO9`/`GPIO8`, display control on `GPIO25` and `GPIO24`,
+and active-low buttons on `GPIO5`, `GPIO6`, and `GPIO13`.
+
+The screen is fixed at 320x240 pixels to match a landscape ILI9341 display. It
+first asks how many bots you want to play against, from one to seven.
 
 On the setup screen:
 

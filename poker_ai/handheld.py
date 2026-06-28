@@ -1,8 +1,10 @@
-"""320x240 handheld poker demo using three keyboard buttons."""
+"""320x240 Raspberry Pi handheld poker game."""
 
 from __future__ import annotations
 
-import tkinter as tk
+import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from textwrap import wrap
 
@@ -11,12 +13,20 @@ from .table import MultiplayerTable, TableEvent
 
 WIDTH = 320
 HEIGHT = 240
+ROTATION = 90
 BUTTON_H = 40
 GUTTER = 6
 LOG_W = 84
 LOG_X = WIDTH - LOG_W - GUTTER
 PLAY_X = GUTTER
 PLAY_W = LOG_X - PLAY_X - GUTTER
+DEBOUNCE_SECONDS = 0.035
+
+BUTTON_PINS = {
+    "J": 5,
+    "K": 6,
+    "L": 13,
+}
 
 BG = "#101719"
 PANEL = "#172326"
@@ -39,6 +49,8 @@ SUIT_SYMBOLS = {
     "d": "\u2666",
     "c": "\u2663",
 }
+NUMPY = None
+NUMPY_IMPORT_ATTEMPTED = False
 
 
 @dataclass(frozen=True)
@@ -48,28 +60,17 @@ class SoftButton:
     enabled: bool
 
 
-class HandheldPokerApp(tk.Tk):
-    """Small-screen poker interface for laptop testing before Pi hardware."""
+class MissingHardwareDependencies(RuntimeError):
+    """Raised when Raspberry Pi display/button libraries are unavailable."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.title("Handheld Poker Demo")
-        self.geometry(f"{WIDTH}x{HEIGHT}")
-        self.resizable(False, False)
-        self.configure(bg=BG)
 
+class HandheldPokerCore:
+    """Shared game flow for the three-button handheld interface."""
+
+    def _init_game_state(self) -> None:
         self.table: MultiplayerTable | None = None
         self.bot_count = 1
         self.mode = "setup"
-        self.canvas = tk.Canvas(
-            self,
-            width=WIDTH,
-            height=HEIGHT,
-            bg=BG,
-            highlightthickness=0,
-            bd=0,
-        )
-        self.canvas.pack()
         self.event_cursor = 0
         self.visible_events: list[TableEvent] = []
         self.log_round_key: tuple[int, str] | None = None
@@ -83,17 +84,58 @@ class HandheldPokerApp(tk.Tk):
             SoftButton("L", "+ Bots", True),
         ]
         self.busy = False
-
-        for key, name in (("j", "J"), ("k", "K"), ("l", "L")):
-            self.bind(f"<KeyPress-{key}>", lambda _event, value=name: self._key_down(value))
-            self.bind(f"<KeyPress-{key.upper()}>", lambda _event, value=name: self._key_down(value))
-            self.bind(f"<KeyRelease-{key}>", lambda _event, value=name: self._key_up(value))
-            self.bind(f"<KeyRelease-{key.upper()}>", lambda _event, value=name: self._key_up(value))
-        self.bind("<KeyPress-space>", lambda _event: self._key_down("K"))
-        self.bind("<KeyRelease-space>", lambda _event: self._key_up("K"))
-        self.focus_force()
-
         self._refresh()
+
+    def after(self, delay_ms: int, callback: Callable[[], None]) -> str:
+        raise NotImplementedError
+
+    def after_cancel(self, job: str) -> None:
+        raise NotImplementedError
+
+    def _present(self) -> None:
+        pass
+
+    def _clear(self) -> None:
+        raise NotImplementedError
+
+    def _rect(
+        self,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        *,
+        fill: str | None = None,
+        outline: str | None = None,
+        width: int = 1,
+    ) -> None:
+        raise NotImplementedError
+
+    def _oval(
+        self,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        *,
+        fill: str | None = None,
+        outline: str | None = None,
+        width: int = 1,
+    ) -> None:
+        raise NotImplementedError
+
+    def _text(
+        self,
+        x: int,
+        y: int,
+        *,
+        text: object = "",
+        fill: str | None = None,
+        font: object = None,
+        anchor: str | None = None,
+        width: int | None = None,
+    ) -> None:
+        raise NotImplementedError
 
     def _start_hand(self) -> None:
         if self.table is None:
@@ -348,15 +390,16 @@ class HandheldPokerApp(tk.Tk):
     def _refresh(self, status: str | None = None) -> None:
         if self.mode == "setup":
             self._set_setup_buttons()
-            self.canvas.delete("all")
+            self._clear()
             self._draw_setup()
             self._draw_buttons()
+            self._present()
             return
         if self.table is None:
             return
         self._pull_events()
         self._set_soft_buttons()
-        self.canvas.delete("all")
+        self._clear()
         self._draw_background()
         self._draw_header()
         self._draw_opponents()
@@ -364,6 +407,7 @@ class HandheldPokerApp(tk.Tk):
         self._draw_hero(status)
         self._draw_log()
         self._draw_buttons()
+        self._present()
 
     def _pull_events(self) -> None:
         assert self.table is not None
@@ -445,26 +489,26 @@ class HandheldPokerApp(tk.Tk):
         ]
 
     def _draw_setup(self) -> None:
-        self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
-        self.canvas.create_rectangle(
+        self._rect(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
+        self._rect(
             10, 18, WIDTH - 10, HEIGHT - BUTTON_H - 12, fill=PANEL, outline="#2d3b40"
         )
-        self.canvas.create_text(
+        self._text(
             72,
             54,
             text="POKER",
             fill=GOLD,
             font=("Menlo", 20, "bold"),
         )
-        self.canvas.create_text(
+        self._text(
             72,
             84,
             text="How many bots?",
             fill=INK,
             font=("Menlo", 12, "bold"),
         )
-        self.canvas.create_oval(190, 42, 276, 128, fill=FELT, outline=GOLD, width=2)
-        self.canvas.create_text(
+        self._oval(190, 42, 276, 128, fill=FELT, outline=GOLD, width=2)
+        self._text(
             233,
             73,
             text=str(self.bot_count),
@@ -472,7 +516,7 @@ class HandheldPokerApp(tk.Tk):
             font=("Menlo", 32, "bold"),
         )
         label = "bot" if self.bot_count == 1 else "bots"
-        self.canvas.create_text(
+        self._text(
             233,
             104,
             text=label,
@@ -480,7 +524,7 @@ class HandheldPokerApp(tk.Tk):
             font=("Menlo", 11, "bold"),
         )
         total = self.bot_count + 1
-        self.canvas.create_text(
+        self._text(
             WIDTH // 2,
             158,
             text=f"{total} total players",
@@ -490,14 +534,14 @@ class HandheldPokerApp(tk.Tk):
 
     def _draw_background(self) -> None:
         assert self.table is not None
-        self.canvas.create_rectangle(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
-        self.canvas.create_rectangle(
+        self._rect(0, 0, WIDTH, HEIGHT, fill=BG, outline="")
+        self._rect(
             PLAY_X, 30, PLAY_X + PLAY_W, 158, fill=FELT, outline=FELT_DARK, width=3
         )
-        self.canvas.create_rectangle(
+        self._rect(
             PLAY_X + 8, 38, PLAY_X + PLAY_W - 8, 150, outline="#2e8060", width=1
         )
-        self.canvas.create_rectangle(
+        self._rect(
             LOG_X, 30, WIDTH - GUTTER, HEIGHT - BUTTON_H - 4, fill=PANEL, outline="#263438"
         )
 
@@ -505,10 +549,10 @@ class HandheldPokerApp(tk.Tk):
         assert self.table is not None
         title = f"HAND {self.table.hand_number}"
         stage = self.table.stage.value.upper()
-        self.canvas.create_text(
+        self._text(
             10, 10, anchor="nw", text=title, fill=GOLD, font=("Menlo", 10, "bold")
         )
-        self.canvas.create_text(
+        self._text(
             PLAY_X + PLAY_W // 2,
             10,
             anchor="n",
@@ -516,7 +560,7 @@ class HandheldPokerApp(tk.Tk):
             fill=INK,
             font=("Menlo", 9, "bold"),
         )
-        self.canvas.create_text(
+        self._text(
             LOG_X + LOG_W // 2,
             10,
             anchor="n",
@@ -585,10 +629,10 @@ class HandheldPokerApp(tk.Tk):
         active = self.table.actor_index == bot_index
         fill = "#29423c" if active else "#18352d"
         outline = GOLD if active else "#3d8264"
-        self.canvas.create_rectangle(
+        self._rect(
             x, y, x + width, y + height, fill=fill, outline=outline
         )
-        self.canvas.create_text(
+        self._text(
             x + 4,
             y + 4,
             anchor="nw",
@@ -599,7 +643,7 @@ class HandheldPokerApp(tk.Tk):
         if self.table.hand_over and bot.in_hand and bot.hole_cards:
             self._draw_showdown_cards(x, y, width, height, bot.hole_cards, compact)
         else:
-            self.canvas.create_text(
+            self._text(
                 x + 4,
                 y + height - 4,
                 anchor="sw",
@@ -640,10 +684,10 @@ class HandheldPokerApp(tk.Tk):
         h = min(height, 16 if compact else 18)
         x0 = x + (width - w) // 2
         y0 = y + (height - h) // 2
-        self.canvas.create_rectangle(
+        self._rect(
             x0, y0, x0 + w, y0 + h, fill="#253034", outline="#526065"
         )
-        self.canvas.create_text(
+        self._text(
             x0 + w // 2,
             y0 + h // 2,
             text=f"B{bot_index} F",
@@ -671,16 +715,16 @@ class HandheldPokerApp(tk.Tk):
     def _draw_hero(self, status: str | None) -> None:
         assert self.table is not None
         hero = self.table.players[0]
-        self.canvas.create_rectangle(
+        self._rect(
             PLAY_X, 162, PLAY_X + PLAY_W, HEIGHT - BUTTON_H - 4, fill=PANEL, outline="#263438"
         )
-        self.canvas.create_text(
+        self._text(
             13, 168, anchor="nw", text="YOU", fill=GOLD, font=("Menlo", 8, "bold")
         )
         chips = f"{hero.stack}"
         if hero.street_contribution:
             chips += f"/{hero.street_contribution}"
-        self.canvas.create_text(
+        self._text(
             13, 187, anchor="nw", text=chips, fill=INK, font=("Menlo", 7)
         )
 
@@ -688,7 +732,7 @@ class HandheldPokerApp(tk.Tk):
             self._draw_card(58, 168, hero.hole_cards[0], scale=0.82)
             self._draw_card(88, 168, hero.hole_cards[1], scale=0.82)
         message = status or self._status_text()
-        self.canvas.create_text(
+        self._text(
             123,
             170,
             anchor="nw",
@@ -718,7 +762,7 @@ class HandheldPokerApp(tk.Tk):
         y = max(top_y, max_y - used_lines * line_height)
         for lines, fill in visible_blocks:
             for text in lines:
-                self.canvas.create_text(
+                self._text(
                     LOG_X + 6,
                     y,
                     anchor="nw",
@@ -776,15 +820,15 @@ class HandheldPokerApp(tk.Tk):
             x0 = index * button_w
             x1 = WIDTH if index == 2 else x0 + button_w
             fill = colors[button.key] if button.enabled else DISABLED
-            self.canvas.create_rectangle(x0, y, x1, HEIGHT, fill=fill, outline=BG)
-            self.canvas.create_text(
+            self._rect(x0, y, x1, HEIGHT, fill=fill, outline=BG)
+            self._text(
                 (x0 + x1) // 2,
                 y + 13,
                 text=button.key,
                 fill="#101719",
                 font=("Menlo", 9, "bold"),
             )
-            self.canvas.create_text(
+            self._text(
                 (x0 + x1) // 2,
                 y + 31,
                 text=button.label,
@@ -817,7 +861,7 @@ class HandheldPokerApp(tk.Tk):
     def _draw_card(self, x: int, y: int, card: Card, scale: float = 1.0) -> None:
         width = int(28 * scale)
         height = int(34 * scale)
-        self.canvas.create_rectangle(
+        self._rect(
             x, y, x + width, y + height, fill=CARD_FACE, outline=CARD_EDGE
         )
         fill = RED_CARD if card.suit in {"h", "d"} else BLACK_CARD
@@ -825,7 +869,7 @@ class HandheldPokerApp(tk.Tk):
         rank_size = max(7, min(int(width * 0.55), int(height * 0.5)))
         suit_space = max(5, height - rank_size - pad)
         suit_size = max(8, min(int(width * 1.35), int(height * 1.25), int(suit_space * 1.9)))
-        self.canvas.create_text(
+        self._text(
             x + pad,
             y + pad,
             anchor="nw",
@@ -833,7 +877,7 @@ class HandheldPokerApp(tk.Tk):
             fill=fill,
             font=("Menlo", rank_size, "bold"),
         )
-        self.canvas.create_text(
+        self._text(
             x + width + max(1, int(1 * scale)),
             y + height + max(3, int(11 * scale)),
             anchor="se",
@@ -845,18 +889,18 @@ class HandheldPokerApp(tk.Tk):
     def _draw_empty_card(self, x: int, y: int, scale: float = 1.0) -> None:
         width = int(28 * scale)
         height = int(34 * scale)
-        self.canvas.create_rectangle(
+        self._rect(
             x, y, x + width, y + height, fill=FELT_DARK, outline="#3e8669"
         )
 
     def _draw_card_back(self, x: int, y: int, scale: float = 1.0) -> None:
         width = int(28 * scale)
         height = int(38 * scale)
-        self.canvas.create_rectangle(
+        self._rect(
             x, y, x + width, y + height, fill="#334654", outline="#8fb0bd"
         )
         inset = max(2, int(5 * scale))
-        self.canvas.create_rectangle(
+        self._rect(
             x + inset,
             y + inset,
             x + width - inset,
@@ -865,5 +909,388 @@ class HandheldPokerApp(tk.Tk):
         )
 
 
-def main() -> None:
-    HandheldPokerApp().mainloop()
+def import_hardware() -> tuple[object, object, object, tuple[object, object, object]]:
+    try:
+        import board
+        import digitalio
+        from adafruit_rgb_display import ili9341
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:
+        message = (
+            "Missing Raspberry Pi display/button dependencies.\n"
+            f"Python executable: {sys.executable}\n"
+            f"Import error: {exc!r}\n"
+            "Install them on the Pi with:\n"
+            "  python3 -m pip install adafruit-circuitpython-rgb-display pillow numpy"
+        )
+        raise MissingHardwareDependencies(message) from exc
+    return board, digitalio, ili9341, (Image, ImageDraw, ImageFont)
+
+
+def make_display(board: object, digitalio: object, ili9341: object) -> object:
+    cs = digitalio.DigitalInOut(board.CE0)
+    dc = digitalio.DigitalInOut(board.D25)
+    rst = digitalio.DigitalInOut(board.D24)
+    spi = board.SPI()
+    return ili9341.ILI9341(
+        spi,
+        cs=cs,
+        dc=dc,
+        rst=rst,
+        baudrate=32_000_000,
+        width=WIDTH,
+        height=HEIGHT,
+        rotation=ROTATION,
+    )
+
+
+def make_buttons(board: object, digitalio: object) -> dict[str, object]:
+    buttons = {}
+    for key, pin in BUTTON_PINS.items():
+        button = digitalio.DigitalInOut(getattr(board, f"D{pin}"))
+        button.direction = digitalio.Direction.INPUT
+        button.pull = digitalio.Pull.UP
+        buttons[key] = button
+    return buttons
+
+
+def rgb888_to_rgb565(image: object) -> bytes:
+    global NUMPY, NUMPY_IMPORT_ATTEMPTED
+    if not NUMPY_IMPORT_ATTEMPTED:
+        NUMPY_IMPORT_ATTEMPTED = True
+        try:
+            import numpy
+        except ImportError:
+            NUMPY = None
+            print("NumPy not installed; using slower Python RGB565 conversion.")
+            print("Install it with: python3 -m pip install numpy")
+        else:
+            NUMPY = numpy
+    if NUMPY is not None:
+        array = NUMPY.asarray(image.convert("RGB"), dtype=NUMPY.uint16)
+        red = array[:, :, 0]
+        green = array[:, :, 1]
+        blue = array[:, :, 2]
+        rgb565 = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
+        return rgb565.byteswap().tobytes()
+
+    data = image.convert("RGB").tobytes()
+    output = bytearray(len(data) // 3 * 2)
+    out_index = 0
+    for index in range(0, len(data), 3):
+        red = data[index]
+        green = data[index + 1]
+        blue = data[index + 2]
+        value = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
+        output[out_index] = value >> 8
+        output[out_index + 1] = value & 0xFF
+        out_index += 2
+    return bytes(output)
+
+
+def send_image_fast(display: object, image: object) -> None:
+    block = getattr(display, "_block", None)
+    if block is None:
+        raise RuntimeError("display driver does not expose _block")
+    width, height = image.size
+    block(0, 0, width - 1, height - 1, rgb888_to_rgb565(image))
+
+
+def send_image(display: object, image: object, image_module: object) -> None:
+    transform = getattr(display, "_poker_transform", None)
+    if transform == "rotate_90":
+        display.image(image.transpose(image_module.Transpose.ROTATE_90))
+        return
+    if transform == "rotate_270":
+        display.image(image.transpose(image_module.Transpose.ROTATE_270))
+        return
+
+    try:
+        display.image(image)
+        setattr(display, "_poker_transform", "none")
+        return
+    except ValueError as original_error:
+        for name, transpose in (
+            ("rotate_90", image_module.Transpose.ROTATE_90),
+            ("rotate_270", image_module.Transpose.ROTATE_270),
+        ):
+            rotated = image.transpose(transpose)
+            try:
+                display.image(rotated)
+                setattr(display, "_poker_transform", name)
+                return
+            except ValueError:
+                pass
+        raise original_error
+
+
+class PiHandheldPokerApp(HandheldPokerCore):
+    """Raspberry Pi ILI9341 + three active-low GPIO buttons."""
+
+    def __init__(self) -> None:
+        board, digitalio, ili9341, pil = import_hardware()
+        self.Image, self.ImageDraw, self.ImageFont = pil
+        self.display = make_display(board, digitalio, ili9341)
+        self.buttons = make_buttons(board, digitalio)
+        self.image = None
+        self.draw = None
+        self._font_cache: dict[tuple[int, bool], object] = {}
+        self._scheduled_jobs: dict[str, tuple[float, Callable[[], None]]] = {}
+        self._job_counter = 0
+        self._fast_transfer = True
+        self._running = False
+        now = time.monotonic()
+        self._button_states = {key: self._is_pressed(button) for key, button in self.buttons.items()}
+        self._button_candidates = self._button_states.copy()
+        self._button_changed_at = {key: now for key in self.buttons}
+        print("Running handheld poker on Raspberry Pi hardware.")
+        print(f"Display size reported by driver: {self.display.width}x{self.display.height}")
+        print("Buttons are active-low: GPIO -> button -> GND.")
+        for key, pin in BUTTON_PINS.items():
+            print(f"  {key}: GPIO{pin}")
+        self._init_game_state()
+
+    def after(self, delay_ms: int, callback: Callable[[], None]) -> str:
+        self._job_counter += 1
+        token = f"pi-after-{self._job_counter}"
+        self._scheduled_jobs[token] = (time.monotonic() + delay_ms / 1000, callback)
+        return token
+
+    def after_cancel(self, job: str) -> None:
+        self._scheduled_jobs.pop(job, None)
+
+    def _clear(self) -> None:
+        self.image = self.Image.new("RGB", (WIDTH, HEIGHT), BG)
+        self.draw = self.ImageDraw.Draw(self.image)
+
+    def _rect(
+        self,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        *,
+        fill: str | None = None,
+        outline: str | None = None,
+        width: int = 1,
+    ) -> None:
+        self.draw.rectangle(
+            (int(x0), int(y0), int(x1), int(y1)),
+            fill=self._color(fill),
+            outline=self._color(outline),
+            width=width,
+        )
+
+    def _oval(
+        self,
+        x0: int,
+        y0: int,
+        x1: int,
+        y1: int,
+        *,
+        fill: str | None = None,
+        outline: str | None = None,
+        width: int = 1,
+    ) -> None:
+        self.draw.ellipse(
+            (int(x0), int(y0), int(x1), int(y1)),
+            fill=self._color(fill),
+            outline=self._color(outline),
+            width=width,
+        )
+
+    def _text(
+        self,
+        x: int,
+        y: int,
+        *,
+        text: object = "",
+        fill: str | None = None,
+        font: object = None,
+        anchor: str | None = None,
+        width: int | None = None,
+    ) -> None:
+        loaded_font = self._font(font)
+        lines = self._wrap_text(str(text), loaded_font, width)
+        line_height = max(1, self._line_height(loaded_font))
+        total_height = line_height * len(lines)
+        top = self._text_top(y, total_height, anchor)
+        for index, line in enumerate(lines):
+            line_width, _line_height = self._text_size(line, loaded_font)
+            left = self._text_left(x, line_width, anchor)
+            self.draw.text(
+                (int(left), int(top + index * line_height)),
+                line,
+                font=loaded_font,
+                fill=self._color(fill) or INK,
+            )
+
+    def _present(self) -> None:
+        if self._fast_transfer:
+            try:
+                send_image_fast(self.display, self.image)
+                return
+            except RuntimeError as exc:
+                print(f"Fast display transfer unavailable: {exc}. Falling back.")
+                self._fast_transfer = False
+        send_image(self.display, self.image, self.Image)
+
+    @staticmethod
+    def _color(color: str | None) -> str | None:
+        return None if color in {None, ""} else color
+
+    def _font(self, font_spec: object) -> object:
+        size = 12
+        bold = False
+        if isinstance(font_spec, tuple):
+            for part in font_spec:
+                if isinstance(part, int):
+                    size = part
+                elif isinstance(part, str) and part.lower() == "bold":
+                    bold = True
+        key = (size, bold)
+        if key not in self._font_cache:
+            candidates = (
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            )
+            if not bold:
+                candidates = tuple(reversed(candidates))
+            for path in candidates:
+                try:
+                    self._font_cache[key] = self.ImageFont.truetype(path, size)
+                    break
+                except OSError:
+                    pass
+            else:
+                self._font_cache[key] = self.ImageFont.load_default()
+        return self._font_cache[key]
+
+    def _wrap_text(self, text: str, font: object, width: int | None) -> list[str]:
+        if width is None or width <= 0:
+            return text.splitlines() or [""]
+        lines: list[str] = []
+        for paragraph in text.splitlines() or [""]:
+            current = ""
+            for word in paragraph.split(" "):
+                candidate = word if not current else f"{current} {word}"
+                if self._text_size(candidate, font)[0] <= width:
+                    current = candidate
+                    continue
+                if current:
+                    lines.append(current)
+                if self._text_size(word, font)[0] <= width:
+                    current = word
+                    continue
+                pieces = self._break_word(word, font, width)
+                lines.extend(pieces[:-1])
+                current = pieces[-1] if pieces else ""
+            lines.append(current)
+        return lines or [""]
+
+    def _break_word(self, word: str, font: object, width: int) -> list[str]:
+        pieces: list[str] = []
+        current = ""
+        for char in word:
+            candidate = current + char
+            if current and self._text_size(candidate, font)[0] > width:
+                pieces.append(current)
+                current = char
+            else:
+                current = candidate
+        if current:
+            pieces.append(current)
+        return pieces
+
+    def _text_size(self, text: str, font: object) -> tuple[int, int]:
+        try:
+            bbox = self.draw.textbbox((0, 0), text, font=font)
+        except AttributeError:
+            return self.draw.textsize(text, font=font)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    def _line_height(self, font: object) -> int:
+        _width, height = self._text_size("Ag", font)
+        return height + 2
+
+    @staticmethod
+    def _text_top(y: int, total_height: int, anchor: str | None) -> float:
+        if anchor in {"nw", "n", "ne"}:
+            return y
+        if anchor in {"sw", "s", "se"}:
+            return y - total_height
+        return y - total_height / 2
+
+    @staticmethod
+    def _text_left(x: int, line_width: int, anchor: str | None) -> float:
+        if anchor in {"nw", "w", "sw"}:
+            return x
+        if anchor in {"ne", "e", "se"}:
+            return x - line_width
+        return x - line_width / 2
+
+    def mainloop(self) -> None:
+        self._running = True
+        try:
+            while self._running:
+                self._poll_buttons()
+                self._run_due_callbacks()
+                time.sleep(0.01)
+        except KeyboardInterrupt:
+            print("\nHandheld poker stopped.")
+        finally:
+            self._close_buttons()
+
+    @staticmethod
+    def _is_pressed(button: object) -> bool:
+        return not bool(button.value)
+
+    def _poll_buttons(self) -> None:
+        now = time.monotonic()
+        for key, button in self.buttons.items():
+            pressed = self._is_pressed(button)
+            if pressed != self._button_candidates[key]:
+                self._button_candidates[key] = pressed
+                self._button_changed_at[key] = now
+                continue
+            if pressed == self._button_states[key]:
+                continue
+            if now - self._button_changed_at[key] < DEBOUNCE_SECONDS:
+                continue
+            self._button_states[key] = pressed
+            if pressed:
+                self._key_down(key)
+            else:
+                self._key_up(key)
+
+    def _run_due_callbacks(self) -> None:
+        now = time.monotonic()
+        due = [
+            (scheduled_at, token)
+            for token, (scheduled_at, _callback) in self._scheduled_jobs.items()
+            if scheduled_at <= now
+        ]
+        for _scheduled_at, token in sorted(due):
+            job = self._scheduled_jobs.pop(token, None)
+            if job is not None:
+                _scheduled_at, callback = job
+                callback()
+
+    def _close_buttons(self) -> None:
+        for button in self.buttons.values():
+            deinit = getattr(button, "deinit", None)
+            if callable(deinit):
+                deinit()
+
+
+def main(argv: list[str] | None = None) -> None:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv:
+        print("handheld_poker.py does not accept options.", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        PiHandheldPokerApp().mainloop()
+    except MissingHardwareDependencies as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(1) from exc

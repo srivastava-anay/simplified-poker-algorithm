@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the 240x320 handheld poker demo."""
+"""Launch the 320x240 handheld poker game."""
 
 from poker_ai.handheld import main
 
