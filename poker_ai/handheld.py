@@ -706,13 +706,12 @@ class HandheldPokerCore:
     def _draw_board(self) -> None:
         assert self.table is not None
         board = self.table.board
-        total_players = len(self.table.players)
-        scale = 0.86 if total_players > 4 else 0.92
+        scale = 0.92
         card_w = int(28 * scale)
-        gap = 9 if total_players > 4 else 13
+        gap = 12
         total_w = 5 * card_w + 4 * gap
         start_x = PLAY_X + (PLAY_W - total_w) // 2
-        y = 134 if total_players > 4 else 128
+        y = 132
         for index in range(5):
             x = start_x + index * (card_w + gap)
             if index < len(board):
@@ -727,22 +726,22 @@ class HandheldPokerCore:
             PLAY_X, HERO_TOP, PLAY_X + PLAY_W, HEIGHT - 4, fill=PANEL, outline="#263438"
         )
         self._text(
-            13, HERO_TOP + 7, anchor="nw", text="YOU", fill=GOLD, font=("Menlo", 8, "bold")
+            13, HERO_TOP + 14, anchor="nw", text="YOU", fill=GOLD, font=("Menlo", 8, "bold")
         )
         chips = f"{hero.stack}"
         if hero.street_contribution:
             chips += f"/{hero.street_contribution}"
         self._text(
-            13, HERO_TOP + 26, anchor="nw", text=chips, fill=INK, font=("Menlo", 7)
+            13, HERO_TOP + 33, anchor="nw", text=chips, fill=INK, font=("Menlo", 7)
         )
 
         if hero.hole_cards:
-            self._draw_card(58, HERO_TOP + 8, hero.hole_cards[0], scale=0.92)
-            self._draw_card(91, HERO_TOP + 8, hero.hole_cards[1], scale=0.92)
+            self._draw_card(58, HERO_TOP + 16, hero.hole_cards[0], scale=0.92)
+            self._draw_card(91, HERO_TOP + 16, hero.hole_cards[1], scale=0.92)
         message = status or self._status_text()
         self._text(
             128,
-            HERO_TOP + 10,
+            HERO_TOP + 18,
             anchor="nw",
             text=message,
             fill=INK,
