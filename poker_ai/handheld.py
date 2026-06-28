@@ -759,7 +759,7 @@ class HandheldPokerCore:
                 continue
             text = self._format_log_text(event.text)
             fill = GOLD if event.kind == "result" else "#d7e0da"
-            wrapped = wrap(text, width=16, break_long_words=True) or [""]
+            wrapped = wrap(text, width=22, break_long_words=True) or [""]
             blocks.append((wrapped, fill))
 
         visible_blocks = self._fit_log_blocks(blocks, max_lines)
@@ -774,7 +774,6 @@ class HandheldPokerCore:
                     text=text,
                     fill=fill,
                     font=("Menlo", 8),
-                    width=LOG_W - 12,
                 )
                 y += line_height
 
