@@ -14,7 +14,7 @@ from .cards import Card, full_deck
 from .evaluator import MonteCarloEvaluator
 from .opponents import ObservedAction, OpponentAction, OpponentTracker
 from .strategy import Action, GameStage, GameState, Position, StrategyEngine
-from .table import MultiplayerTable
+from .table import BOT_NAMES, MultiplayerTable
 
 InputFunction = Callable[[str], str]
 OutputFunction = Callable[[str], None]
@@ -85,7 +85,7 @@ class HeadsUpGame:
             raise ValueError("Blinds must satisfy 0 < small blind <= big blind")
         self.players = {
             "you": Player("You", starting_stack),
-            "bot": Player("Bot", starting_stack),
+            "bot": Player(BOT_NAMES[0], starting_stack),
         }
         self.small_blind = small_blind
         self.big_blind = big_blind
@@ -127,10 +127,10 @@ class HeadsUpGame:
         you = self.players["you"].stack
         bot = self.players["bot"].stack
         if you == 0:
-            self._output("The bot wins the match.")
+            self._output(f"{self.players['bot'].name} wins the match.")
         elif bot == 0:
             self._output("You win the match!")
-        self._output(f"Final stacks — You: {you}, Bot: {bot}")
+        self._output(f"Final stacks — You: {you}, {self.players['bot'].name}: {bot}")
 
     def play_hand(self) -> None:
         self.hand_number += 1
@@ -186,7 +186,7 @@ class HeadsUpGame:
     def _finish_hand(self) -> None:
         self._output(
             f"Stacks — You: {self.players['you'].stack}, "
-            f"Bot: {self.players['bot'].stack}"
+            f"{self.players['bot'].name}: {self.players['bot'].stack}"
         )
         self.tracker.mark_hand_seen("you")
         self.dealer = self._other(self.dealer)
@@ -360,11 +360,11 @@ class HeadsUpGame:
 
         if to_call:
             if decision.action == Action.FOLD:
-                self._output("Bot folds.")
+                self._output(f"{bot.name} folds.")
                 return ObservedAction.FOLD, 0
             if decision.action != Action.RAISE or max_total <= current_bet:
                 paid = self._pay("bot", min(to_call, bot.stack))
-                self._output(f"Bot calls {paid}.")
+                self._output(f"{bot.name} calls {paid}.")
                 return ObservedAction.CALL, paid
             minimum = current_bet + last_raise
             desired_total = bot.street_contribution + max(
@@ -373,11 +373,11 @@ class HeadsUpGame:
             target = min(max(desired_total, minimum), max_total)
             paid = self._pay("bot", target - bot.street_contribution)
             suffix = " (all-in)" if bot.stack == 0 else ""
-            self._output(f"Bot raises to {target}{suffix}.")
+            self._output(f"{bot.name} raises to {target}{suffix}.")
             return ObservedAction.RAISE, paid
 
         if decision.action not in {Action.BET, Action.RAISE} or max_total == 0:
-            self._output("Bot checks.")
+            self._output(f"{bot.name} checks.")
             return ObservedAction.CHECK, 0
 
         desired = max(int(round(decision.amount)), self.big_blind)
@@ -390,19 +390,20 @@ class HeadsUpGame:
             )
             paid = self._pay("bot", target - bot.street_contribution)
             suffix = " (all-in)" if bot.stack == 0 else ""
-            self._output(f"Bot raises to {target}{suffix}.")
+            self._output(f"{bot.name} raises to {target}{suffix}.")
             return ObservedAction.RAISE, paid
 
         target = min(desired, max_total)
         paid = self._pay("bot", target - bot.street_contribution)
         suffix = " (all-in)" if bot.stack == 0 else ""
-        self._output(f"Bot bets {target}{suffix}.")
+        self._output(f"{bot.name} bets {target}{suffix}.")
         return ObservedAction.BET, paid
 
     def _show_state(self, stage: GameStage, actor_id: str, to_call: int) -> None:
         self._output(
             f"\n[{stage.value}] Pot: {self.pot} | "
-            f"You: {self.players['you'].stack} | Bot: {self.players['bot'].stack}"
+            f"You: {self.players['you'].stack} | "
+            f"{self.players['bot'].name}: {self.players['bot'].stack}"
         )
         if actor_id == "you" and to_call:
             self._output(f"Amount to call: {to_call}")
@@ -424,7 +425,7 @@ class HeadsUpGame:
         bot_score = score(bot)
         self._output("\nShowdown")
         self._output(f"You: {self._cards(you.hole_cards)}")
-        self._output(f"Bot: {self._cards(bot.hole_cards)}")
+        self._output(f"{bot.name}: {self._cards(bot.hole_cards)}")
         self._output(f"Board: {self._cards(self.board)}")
         if you_score < bot_score:
             self._award_pot("you", evaluator.class_to_string(evaluator.get_rank_class(you_score)))

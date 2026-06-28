@@ -20,6 +20,8 @@ from .strategy import (
     StrategyEngine,
 )
 
+BOT_NAMES = ("Jake", "Nick", "Dave", "Ryan", "Alex", "Mike")
+
 
 @dataclass
 class TablePlayer:
@@ -76,7 +78,12 @@ class MultiplayerTable:
             TablePlayer(f"human-{i}", f"Player {i}", False, self.starting_stack)
             for i in range(1, self.human_players + 1)
         ] + [
-            TablePlayer(f"bot-{i}", f"Bot {i}", True, self.starting_stack)
+            TablePlayer(
+                f"bot-{i}",
+                BOT_NAMES[(i - 1) % len(BOT_NAMES)],
+                True,
+                self.starting_stack,
+            )
             for i in range(1, self.bot_players + 1)
         ]
         self._rng = random.Random(self.seed)
