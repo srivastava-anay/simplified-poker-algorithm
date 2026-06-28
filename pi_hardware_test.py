@@ -30,21 +30,20 @@ INK = (237, 242, 232)
 MUTED = (145, 160, 163)
 
 
-def import_hardware() -> tuple[object, object, object, object, object]:
+def import_hardware() -> tuple[object, object, object, object]:
     try:
         import board
         import digitalio
         from adafruit_rgb_display import ili9341
-        from gpiozero import Button
         from PIL import Image, ImageDraw, ImageFont
     except ImportError as exc:
         print("Missing Pi display/button dependencies.")
         print(f"Python executable: {sys.executable}")
         print(f"Import error: {exc!r}")
         print("Install them on the Pi with:")
-        print("  python -m pip install adafruit-circuitpython-rgb-display gpiozero pillow")
+        print("  python -m pip install adafruit-circuitpython-rgb-display pillow")
         raise SystemExit(1) from exc
-    return board, digitalio, ili9341, Button, (Image, ImageDraw, ImageFont)
+    return board, digitalio, ili9341, (Image, ImageDraw, ImageFont)
 
 
 def load_font(image_font: object, size: int) -> object:
@@ -73,6 +72,16 @@ def make_display(board: object, digitalio: object, ili9341: object) -> object:
         baudrate=32_000_000,
         rotation=90,
     )
+
+
+def make_buttons(board: object, digitalio: object) -> dict[str, object]:
+    buttons = {}
+    for label, pin in BUTTONS.items():
+        button = digitalio.DigitalInOut(getattr(board, f"D{pin}"))
+        button.direction = digitalio.Direction.INPUT
+        button.pull = digitalio.Pull.UP
+        buttons[label] = button
+    return buttons
 
 
 def draw_screen(
@@ -113,13 +122,10 @@ def draw_screen(
 
 
 def main() -> int:
-    board, digitalio, ili9341, Button, pil = import_hardware()
+    board, digitalio, ili9341, pil = import_hardware()
     Image, ImageDraw, ImageFont = pil
     display = make_display(board, digitalio, ili9341)
-    buttons = {
-        label: Button(pin, pull_up=True, bounce_time=0.03)
-        for label, pin in BUTTONS.items()
-    }
+    buttons = make_buttons(board, digitalio)
     fonts = {
         "title": load_font(ImageFont, 17),
         "large": load_font(ImageFont, 24),
@@ -132,7 +138,7 @@ def main() -> int:
     tick = 0
     try:
         while True:
-            states = {label: button.is_pressed for label, button in buttons.items()}
+            states = {label: not button.value for label, button in buttons.items()}
             draw_screen(display, Image, ImageDraw, fonts, states, tick)
             tick += 1
             time.sleep(0.08)
