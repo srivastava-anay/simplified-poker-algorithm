@@ -6,6 +6,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from textwrap import wrap
 
 from .cards import Card
 from .table import MultiplayerTable, TableEvent
@@ -752,15 +753,15 @@ class HandheldPokerCore:
         top_y = 34
         max_y = HEIGHT - 8
         max_lines = max(1, (max_y - top_y) // line_height)
-        log_font = self._font(("Menlo", 8))
-        log_width = LOG_W - 12
+        log_font = ("mono", 8)
+        log_chars = 17
         blocks: list[tuple[list[str], str]] = []
         for event in self.visible_events:
             if event.kind == "street":
                 continue
             text = self._format_log_text(event.text)
             fill = GOLD if event.kind == "result" else "#d7e0da"
-            wrapped = self._wrap_text(text, log_font, log_width)
+            wrapped = wrap(text, width=log_chars, break_long_words=True) or [""]
             blocks.append((wrapped, fill))
 
         visible_blocks = self._fit_log_blocks(blocks, max_lines)
