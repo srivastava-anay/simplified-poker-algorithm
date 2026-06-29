@@ -66,8 +66,9 @@ PERSONALITIES = {
     Personality.TRICKY: PersonalitySettings(0.03, 0.02, 1.35, 0.96, 0.01),
 }
 
-# Keeps the richer strategy while reducing marginal aggression by roughly half.
-AGGRESSION_DIAL = 0.50
+# Keeps the richer strategy while trimming marginal aggression on small hardware.
+AGGRESSION_DIAL = 0.44
+BET_SIZE_DIAL = 0.92
 
 
 EXPECTED_BOARD_CARDS = {
@@ -482,7 +483,7 @@ class StrategyEngine:
             if (
                 strong
                 and value_raise
-                and best_raise_ev > call_ev + state.big_blind * 0.4
+                and best_raise_ev > call_ev + state.big_blind * 0.55
             ):
                 return self._decision(
                     Action.RAISE, best_amount, equity, pot_odds, False,
@@ -562,7 +563,7 @@ class StrategyEngine:
                 "Occasional dry-board slowplay protects the checking range.",
             )
         if strong and (
-            best_raise_ev > state.big_blind * 0.1 or low_spr
+            best_raise_ev > state.big_blind * 0.18 or low_spr
         ):
             value_amount = (
                 max(candidates)
@@ -1211,7 +1212,7 @@ class StrategyEngine:
 
         amounts = []
         for fraction in fractions:
-            adjusted = fraction * self.settings.size_multiplier
+            adjusted = fraction * self.settings.size_multiplier * BET_SIZE_DIAL
             if state.amount_to_call:
                 pot_after_call = state.pot_size + state.amount_to_call
                 amount = state.amount_to_call + max(
@@ -1245,7 +1246,7 @@ class StrategyEngine:
             fraction = 0.44 + 0.14 * texture.wetness
         else:
             fraction = 0.48 + 0.12 * daring
-        fraction *= self.settings.size_multiplier
+        fraction *= self.settings.size_multiplier * BET_SIZE_DIAL
         if state.amount_to_call:
             pot_after_call = state.pot_size + state.amount_to_call
             amount = state.amount_to_call + max(
@@ -1262,7 +1263,7 @@ class StrategyEngine:
     def _protection_size(
         state: GameState, texture: BoardTexture
     ) -> float:
-        fraction = 0.32 + 0.13 * texture.wetness
+        fraction = (0.32 + 0.13 * texture.wetness) * BET_SIZE_DIAL
         amount = max(state.big_blind, state.pot_size * fraction)
         if state.effective_stack is not None:
             amount = min(amount, state.effective_stack)
@@ -1334,11 +1335,14 @@ class StrategyEngine:
     ) -> float:
         if preflop:
             amount = max(
-                state.big_blind * (2.0 + 0.60 * strength),
+                state.big_blind * (2.0 + 0.54 * strength),
                 state.pot_size * 0.45,
             )
         else:
-            amount = max(state.pot_size * min(max(strength, 0.30), 0.86), 1.0)
+            amount = max(
+                state.pot_size * min(max(strength * BET_SIZE_DIAL, 0.30), 0.82),
+                1.0,
+            )
         if state.effective_stack is not None:
             amount = min(amount, state.effective_stack)
         return StrategyEngine._chips(amount)
@@ -1348,7 +1352,7 @@ class StrategyEngine:
         pot_after_call = state.pot_size + state.amount_to_call
         increment = max(
             state.amount_to_call,
-            pot_after_call * min(max(strength * 0.78, 0.36), 0.78),
+            pot_after_call * min(max(strength * 0.72, 0.34), 0.72),
         )
         amount = state.amount_to_call + increment
         if state.effective_stack is not None:
